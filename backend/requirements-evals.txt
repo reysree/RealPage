@@ -1,0 +1,7 @@
+# Install the application runtime dependencies first.
+-r requirements.txt
+
+# OpenAI Evals framework (PyPI: evals).
+# Heavy transitive deps include TensorFlow, spaCy, datasets, Playwright, etc.
+# Importing `evals` may require OPENAI_API_KEY to be set first.
+evals>=3.0.0

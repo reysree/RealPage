@@ -1,0 +1,13 @@
+---
+description: Cursor-native harness workflow for agents, skills, commands, and hooks
+alwaysApply: true
+---
+
+# Cursor Harness Workflow
+
+- Cursor-native rules live in `.cursor/rules/*.mdc`; project hooks live in `.cursor/hooks.json` and `.cursor/hooks/*`.
+- Project agent prompts are mirrored in `.cursor/agents/`; project skills are mirrored in `.cursor/skills/`.
+- Command playbooks from Claude are mirrored in `.cursor/commands/` as reference workflows.
+- Use `.cursor/hooks/pre-write-check.sh` to block duplicate source file creation.
+- Use `.cursor/hooks/audit.sh` as the stop hook; it writes detailed results to `.cursor/audit.log`.
+- If mirrored agent or skill files mention old `.claude` paths, update the `.cursor` copy before relying on it.

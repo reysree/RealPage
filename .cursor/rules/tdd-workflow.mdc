@@ -1,0 +1,12 @@
+---
+description: Behavior-first development workflow
+alwaysApply: false
+---
+
+# Behavior-First Workflow
+
+- For features and bug fixes, state the expected behavior before editing.
+- Prefer a focused failing test or reproducible check before implementation.
+- Make the smallest implementation that passes, then refactor only what the change requires.
+- Verification must be real: record exact commands and whether they passed, failed, or were skipped.
+- Do not mark a checkpoint COMPLETE unless verification actually passed.

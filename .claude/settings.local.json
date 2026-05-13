@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir -p /c/reysree/realpage/.claude/skills)",
+      "Bash(mv /c/reysree/realpage/.claude/commands/harness-guide.md /c/reysree/realpage/.claude/skills/harness-guide.md)",
+      "Bash(rmdir /c/reysree/realpage/.claude/commands)",
+      "WebSearch",
+      "Bash(chmod +x *)",
+      "Bash(Remove-Item *)",
+      "Bash(bash .claude/scripts/audit.sh)",
+      "Bash(echo \"exit: $?\")"
+    ]
+  }
+}

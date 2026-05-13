@@ -1,0 +1,13 @@
+---
+description: Frontend React conventions
+globs: frontend/src/**/*.{js,jsx,ts,tsx}
+alwaysApply: false
+---
+
+# Frontend React Standards
+
+- Keep API calls in `frontend/src/api.js`; components should not call `fetch()` directly.
+- Use React functional components and match the existing Tailwind style.
+- Preserve session behavior: session ID in `sessionStorage`, clear button calls the backend session delete route.
+- UI copy should be simple, action-oriented, and readable by non-native English speakers.
+- Verify meaningful UI changes with lint and, when practical, a manual browser check.

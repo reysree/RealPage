@@ -1,0 +1,15 @@
+---
+description: Core RealPage Lumina project rules
+alwaysApply: true
+---
+
+# RealPage Lumina Core Rules
+
+- Keep changes surgical: touch only files required by the request and preserve user edits.
+- Prefer the existing FastAPI, OpenAI Agents SDK, ChromaDB, SQLite, React, and Tailwind patterns.
+- Do not add agents without updating the agent and harness inventories.
+- Maintain the phase gate: a phase opens only after developer COMPLETE, security PASS, and audit PASS.
+- Read the latest `logs/` checkpoint before phase work; if none exists, read the latest `recall/` architecture decision.
+- Write a checkpoint in `logs/YYYYMMDD_HHMM_<agent>_<descriptor>.md` after significant work.
+- Keep database access behind tools; the agent layer must not access the DB directly.
+- API routes use Pydantic request and response models, not raw dict contracts.

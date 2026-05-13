@@ -1,0 +1,80 @@
+# ──────────────────────────────────────────────
+# Python / Backend
+# ──────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
+backend/.venv/
+backend/.venv-evals/
+.venv/
+venv/
+env/
+
+# Distribution / packaging
+*.egg-info/
+dist/
+build/
+*.egg
+MANIFEST
+
+# SQLite databases
+*.db
+*.sqlite
+*.sqlite3
+
+# ChromaDB vector store
+backend/chroma_db/
+chroma_db/
+chroma/
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# ──────────────────────────────────────────────
+# Node / Frontend
+# ──────────────────────────────────────────────
+node_modules/
+frontend/dist/
+frontend/dist-ssr/
+*.local
+
+# npm / yarn / pnpm debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# ──────────────────────────────────────────────
+# Environment & Secrets
+# ──────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ──────────────────────────────────────────────
+# Agent logs & checkpoints (runtime output)
+# ──────────────────────────────────────────────
+logs/
+*.log
+
+# ──────────────────────────────────────────────
+# Editor & OS
+# ──────────────────────────────────────────────
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

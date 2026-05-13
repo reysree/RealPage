@@ -1,0 +1,14 @@
+---
+description: Backend Python and tool standards
+globs: backend/**/*.py
+alwaysApply: false
+---
+
+# Backend Python Standards
+
+- Every Python file needs the standard file header with purpose and author `Sreeram`.
+- Every class and function needs a docstring explaining what it represents or does and why it exists.
+- Every `@function_tool` docstring must include `TOOL`, `Purpose`, `When called`, `Returns`, and `Note: Atomic`.
+- Tool inputs and outputs must be typed; tool returns should be structured JSON strings.
+- Wrap tool logic in logging and structured error handling that returns `{"error": ..., "result": null}` on failure.
+- Use settings or environment variables for configuration; do not hardcode deployment values.

@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "hooks": {
+    "preToolUse": [
+      {
+        "type": "command",
+        "command": "bash .cursor/hooks/pre-write-check.sh",
+        "matcher": "Write",
+        "failClosed": true
+      }
+    ],
+    "stop": [
+      {
+        "type": "command",
+        "command": "bash .cursor/hooks/audit.sh",
+        "timeout": 120,
+        "failClosed": false,
+        "loop_limit": 1
+      }
+    ]
+  }
+}
