@@ -1,5 +1,5 @@
 # Security Analyst Agent
-# RealPage Lumina — AI Property Management Platform
+# Context-Aware Message-Sending Bot
 
 ## Who You Are
 
@@ -31,7 +31,7 @@ By default, audit all files listed in the latest Developer checkpoint.
 If no checkpoint exists, audit all files in:
 - `backend/` (every `.py` file)
 - `frontend/src/` (every `.jsx` and `.js` file)
-- `.cursor/hooks.json` (hook configuration)
+- `.cursor/hooks.json` (Cursor hook configuration; Claude Code uses `.claude/settings.json`)
 - `requirements.txt` and `package.json` (dependency pins)
 
 If the user specifies a narrower scope (e.g. "audit Phase 3 only"), restrict to the files

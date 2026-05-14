@@ -4,12 +4,20 @@ Purpose: FastAPI application entry point with CORS and health checks.
 Author: Sreeram
 """
 
+import logging
 from functools import lru_cache
+from time import perf_counter
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from fastapi.responses import JSONResponse
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from backend.agent import run_agent
+from backend.schemas import AgentOutput, HealthResponse, RunRequest, RunResponse
+
+logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -19,15 +27,6 @@ class Settings(BaseSettings):
 
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     model_config = SettingsConfigDict(env_prefix="REALPAGE_", env_file=".env")
-
-
-class HealthResponse(BaseModel):
-    """
-    Response model for the backend health check.
-    """
-
-    status: str
-    service: str
 
 
 @lru_cache
@@ -64,8 +63,33 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    @app.exception_handler(RequestValidationError)
+    async def validation_exception_handler(
+        request: Request,
+        exc: RequestValidationError,
+    ) -> JSONResponse:
+        """
+        Return validation errors without echoing submitted input values.
+
+        Args:
+            request: Incoming request that failed validation.
+            exc: FastAPI request validation exception.
+        Returns:
+            JSONResponse: Sanitized validation details.
+        """
+
+        sanitized_errors = [
+            {
+                "loc": error.get("loc", []),
+                "msg": error.get("msg", "Invalid input"),
+                "type": error.get("type", "validation_error"),
+            }
+            for error in exc.errors()
+        ]
+        return JSONResponse(status_code=422, content={"detail": sanitized_errors})
+
     @app.get("/health", response_model=HealthResponse)
-    def health_check() -> HealthResponse:
+    async def health_check() -> HealthResponse:
         """
         Report whether the backend API is available.
 
@@ -73,7 +97,28 @@ def create_app() -> FastAPI:
             HealthResponse: Current API health state.
         """
 
-        return HealthResponse(status="ok", service="realpage-backend")
+        return HealthResponse(status="ok")
+
+    @app.post("/run", response_model=RunResponse)
+    async def run_case(request: RunRequest) -> RunResponse:
+        """
+        Run one outreach case through the agent and return generated output.
+
+        Args:
+            request: Validated outreach run request.
+        Returns:
+            RunResponse: Generated agent output and runtime metadata.
+        """
+
+        started_at = perf_counter()
+        try:
+            output = AgentOutput.model_validate(run_agent(request.model_dump()))
+        except Exception as exc:
+            logger.error("Agent run failed: %s", exc, exc_info=True)
+            raise HTTPException(status_code=500, detail="Agent run failed") from exc
+
+        latency_ms = int((perf_counter() - started_at) * 1000)
+        return RunResponse(output=output, latency_ms=latency_ms)
 
     return app
 

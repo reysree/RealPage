@@ -39,6 +39,25 @@ if [ ! -f "$PYTHON" ]; then PYTHON="$ROOT/backend/.venv/bin/python"; fi
 if [ ! -f "$PYTHON" ] && command -v python.exe >/dev/null 2>&1; then PYTHON="$(command -v python.exe)"; fi
 if [ ! -f "$PYTHON" ]; then PYTHON="$(command -v python3 2>/dev/null || command -v python 2>/dev/null || echo python)"; fi
 
+python_arg_path() {
+  case "$PYTHON" in
+    *python.exe|*.exe)
+      if command -v wslpath >/dev/null 2>&1; then
+        wslpath -w "$1"
+      elif command -v cygpath >/dev/null 2>&1; then
+        cygpath -w "$1"
+      else
+        echo "$1"
+      fi
+      ;;
+    *)
+      echo "$1"
+      ;;
+  esac
+}
+
+PYTHONPATH_FOR_IMPORT="$(python_arg_path "$ROOT")"
+
 TMP="$(mktemp)"
 {
   echo ""
@@ -55,7 +74,8 @@ TMP="$(mktemp)"
     SYNTAX_OK=true
     while IFS= read -r f; do
       [ -z "$f" ] && continue
-      if "$PYTHON" -m py_compile "$f" 2>&1; then
+      PY_FILE="$(python_arg_path "$f")"
+      if "$PYTHON" -m py_compile "$PY_FILE" </dev/null 2>&1; then
         echo "[PASS] syntax: $(basename "$f")"
       else
         echo "[FAIL] syntax: $f"
@@ -64,17 +84,17 @@ TMP="$(mktemp)"
     done <<< "$PY_CHANGED"
 
     if $SYNTAX_OK && [ -d "$ROOT/backend" ]; then
-      cd "$ROOT/backend" || exit 0
-      for module in schemas db tools agent main; do
-        [ -f "${module}.py" ] || continue
-        if "$PYTHON" -c "import ${module}" 2>/dev/null; then
+      for module in backend.schemas backend.db backend.tools backend.agent backend.main; do
+        module_file="$ROOT/${module//.//}.py"
+        module_dir="$ROOT/${module//.//}"
+        [ -f "$module_file" ] || [ -d "$module_dir" ] || continue
+        if PYTHONPATH="$PYTHONPATH_FOR_IMPORT" "$PYTHON" -c "import ${module}" 2>/dev/null; then
           echo "[PASS] import: ${module}"
         else
           echo "[FAIL] import: ${module}"
-          "$PYTHON" -c "import ${module}" 2>&1 | sed 's/^/       /'
+          PYTHONPATH="$PYTHONPATH_FOR_IMPORT" "$PYTHON" -c "import ${module}" 2>&1 | sed 's/^/       /'
         fi
       done
-      cd "$ROOT" || exit 0
     fi
   fi
 

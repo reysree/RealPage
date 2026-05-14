@@ -1,0 +1,239 @@
+"""
+File: agent.py
+Purpose: Outreach agent orchestration over validated case inputs and tools.
+Author: Sreeram
+"""
+
+import json
+import logging
+from typing import Any
+
+from backend.audit_log import append_agent_audit
+from backend.schemas import AgentOutput, MessageOutput, NextAction, RunRequest
+from backend.tools.channel_selector import select_channel
+from backend.tools.compliance import check_compliance
+from backend.tools.consent import check_consent
+from backend.tools.input_security import check_input_security
+from backend.tools.message_composer import compose_message
+from backend.tools.timing import determine_send_time
+
+logger = logging.getLogger(__name__)
+
+
+def _parse_tool_result(raw_result: str, tool_name: str) -> dict[str, Any]:
+    """
+    Parse one tool response and raise when the tool reported an error.
+
+    Args:
+        raw_result: JSON string returned by a tool.
+        tool_name: Name of the tool for error context.
+    Returns:
+        Parsed `result` payload from the tool response.
+    """
+
+    parsed = json.loads(raw_result)
+    if parsed.get("error"):
+        raise ValueError(f"{tool_name} failed: {parsed['error']}")
+    result = parsed.get("result")
+    if not isinstance(result, dict):
+        raise ValueError(f"{tool_name} returned no result payload")
+    return result
+
+
+def _build_next_action(request: RunRequest) -> NextAction:
+    """
+    Build the recommended next action from persona and move-date horizon.
+
+    Args:
+        request: Validated outreach run request.
+    Returns:
+        Next action for follow-up automation.
+    """
+
+    move_date = request.input.move_date_target
+    interaction_date = request.input.last_interaction.date()
+    days_until_move = (move_date - interaction_date).days
+
+    if request.persona == "prospect" and days_until_move < 45:
+        return NextAction(
+            type="start_cadence",
+            name="prospect_welcome_short_horizon",
+        )
+
+    if request.persona == "prospect":
+        return NextAction(
+            type="start_cadence",
+            name="prospect_welcome_long_horizon",
+        )
+
+    return NextAction(type="follow_up_in_days", value=3)
+
+
+def _dump_output(agent_output: AgentOutput) -> dict[str, Any]:
+    """
+    Serialize agent output for APIs and persistence, keeping explicit null branches.
+
+    Args:
+        agent_output: Completed agent decision payload.
+    Returns:
+        Boundary-safe dictionary with nulls retained for skipped message fields.
+    """
+
+    return agent_output.model_dump(mode="python", exclude_none=False)
+
+
+def _empty_output() -> dict[str, Any]:
+    """
+    Create the standard no-send output shape.
+
+    Returns:
+        Agent output dictionary with send=false and all message fields empty.
+    """
+
+    return _dump_output(AgentOutput(send=False, next_message=None, next_action=None))
+
+
+def _parse_compose_tool(raw_tool_json: str) -> dict[str, Any] | None:
+    """
+    Parse compose_message envelope and return the result payload, or None on failure.
+
+    Failures are logged and audited internally. The caller returns _empty_output() when
+    None is returned — no error details propagate to the API response.
+
+    Args:
+        raw_tool_json: compose_message JSON return string.
+    Returns:
+        Result payload dict, or None when the composer reported an error.
+    """
+
+    parsed = json.loads(raw_tool_json)
+    err = parsed.get("error")
+    result = parsed.get("result")
+    if err or not isinstance(result, dict):
+        code = str(parsed.get("error_code") or "COMPOSER_FAILED")
+        append_agent_audit(
+            component="run_agent",
+            error_code=code,
+            message=str(err or "composer returned no result payload"),
+            detail={},
+        )
+        logger.warning("[run_agent] composer_failed code=%s", code)
+        return None
+    return result
+
+
+def _extract_text_fields(request: RunRequest) -> dict[str, str]:
+    """
+    Collect all free-text fields from a validated request for security screening.
+
+    Args:
+        request: Validated outreach run request.
+    Returns:
+        Flat dict of field_name to string value covering every user-supplied text field.
+    """
+
+    fields: dict[str, str] = {
+        "persona": request.persona,
+        "lifecycle_stage": request.lifecycle_stage,
+        "property_name": request.input.property_name,
+    }
+    if request.input.profile.first_name:
+        fields["profile.first_name"] = request.input.profile.first_name
+    if request.input.profile.city_interest:
+        fields["profile.city_interest"] = request.input.profile.city_interest
+    if request.input.profile.amenity_interest:
+        for i, item in enumerate(request.input.profile.amenity_interest):
+            fields[f"profile.amenity_interest[{i}]"] = item
+    if request.assertions.constraints.brand_style_notes:
+        fields["constraints.brand_style_notes"] = request.assertions.constraints.brand_style_notes
+    if request.assertions.constraints.compliance_suffix:
+        fields["constraints.compliance_suffix"] = request.assertions.constraints.compliance_suffix
+    if request.assertions.constraints.primary_cta:
+        fields["constraints.primary_cta"] = request.assertions.constraints.primary_cta
+    return fields
+
+
+def run_agent(case_input: dict[str, Any]) -> dict[str, Any]:
+    """
+    Run one stateless outreach case through selection, composition, and compliance.
+
+    Args:
+        case_input: Raw JSONL record shaped like `RunRequest`.
+    Returns:
+        Agent output dictionary with send decision, message, and next action.
+    """
+
+    request = RunRequest.model_validate(case_input)
+    constraints = request.assertions.constraints.model_dump(exclude_none=True)
+
+    security_result = _parse_tool_result(
+        check_input_security(_extract_text_fields(request)),
+        "check_input_security",
+    )
+    if security_result.get("passed") is not True:
+        logger.warning(
+            "[run_agent] input blocked by security screen: risk_level=%s flags=%s",
+            security_result.get("risk_level"),
+            security_result.get("flags"),
+        )
+        return _empty_output()
+
+    channel_result = _parse_tool_result(
+        select_channel(request.channel_preferences, request.consent.model_dump()),
+        "select_channel",
+    )
+    if channel_result.get("send") is not True:
+        return _empty_output()
+
+    selected_channel = str(channel_result["selected_channel"])
+    consent_for_channel = _parse_tool_result(
+        check_consent(selected_channel, request.consent.model_dump()),
+        "check_consent",
+    )
+    if consent_for_channel.get("eligible") is not True:
+        return _empty_output()
+
+    timing_result = _parse_tool_result(
+        determine_send_time(
+            request.input.timezone,
+            request.input.last_interaction.isoformat(),
+            request.lifecycle_stage,
+        ),
+        "determine_send_time",
+    )
+    raw_compose = compose_message(
+        channel=selected_channel,
+        persona=request.persona,
+        lifecycle_stage=request.lifecycle_stage,
+        profile=request.input.profile.model_dump(exclude_none=True),
+        property_name=request.input.property_name,
+        primary_cta=constraints.get("primary_cta", "book_tour"),
+        constraints=request.assertions.constraints.model_dump(exclude_none=True),
+        consent_verification={
+            "channel": consent_for_channel.get("channel"),
+            "eligible": consent_for_channel.get("eligible"),
+            "reason": consent_for_channel.get("reason"),
+        },
+    )
+    composer_result = _parse_compose_tool(raw_compose)
+    if composer_result is None:
+        return _empty_output()
+    compliance_result = _parse_tool_result(
+        check_compliance(str(composer_result["body"]), constraints),
+        "check_compliance",
+    )
+    if compliance_result.get("passed") is not True:
+        return _empty_output()
+
+    output = AgentOutput(
+        send=True,
+        next_message=MessageOutput(
+            channel=selected_channel,
+            send_at=str(timing_result["send_at"]),
+            subject=composer_result.get("subject"),
+            body=str(composer_result["body"]),
+            cta=composer_result["cta"],
+        ),
+        next_action=_build_next_action(request),
+    )
+    return _dump_output(output)

@@ -54,7 +54,7 @@ If the user passes an argument (e.g. `/harness-guide memory`), focus on that are
 
 ## Skills / Commands Best Practices
 
-**Location:** `.cursor/commands/<name>.md` → invoked as `/<name>`
+**Location:** `.claude/commands/<name>.md` (Claude Code) or `.cursor/commands/<name>.md` (Cursor mirror) → invoked as `/<name>`
 
 ### Structure of a well-formed command file
 ```
@@ -171,7 +171,7 @@ Before acting on a memory that names a file, function, or flag — verify it sti
 
 ## Hooks Best Practices
 
-**Location:** `.cursor/hooks.json` → `hooks` key (or `settings.local.json` for personal-only hooks)
+**Location:** `.claude/settings.json` → `hooks` key for Claude Code (or `settings.local.json` for personal-only hooks). **Cursor mirror:** `.cursor/hooks.json` with scripts under `.cursor/hooks/`.
 
 ### Hook anatomy
 ```json

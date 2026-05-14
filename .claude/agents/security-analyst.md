@@ -1,5 +1,5 @@
 # Security Analyst Agent
-# RealPage Lumina — AI Property Management Platform
+# Context-Aware Message-Sending Bot
 
 ## Who You Are
 

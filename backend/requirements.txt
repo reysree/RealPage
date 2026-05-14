@@ -10,6 +10,9 @@ pydantic-settings>=2.0
 # OpenAI Python SDK ("opensdk")
 openai>=1.40.0
 
+# Agent workflows (LangGraph)
+langgraph>=0.2.0
+
 # Vector store
 chromadb>=1.5.0
 

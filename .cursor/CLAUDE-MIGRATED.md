@@ -100,11 +100,12 @@ Fixed responsibilities. Do not add agents without updating this table and the Ha
 | Solution Architect | `.cursor/agents/solution-architect.md` | Phase 0; major requirement changes | `architecture-decision-skill`, `openai-sdk-guide`, `recall` | `recall/YYYYMMDD_HHMM_architect_phase0.md` + `logs/` checkpoint |
 | Developer | `.cursor/agents/distinguished-engineer.md` | Phases 1–5; fixing audit flags | `python-guide`, `openai-sdk-guide`, `react-guide`, `tdd`, `recall` | `logs/YYYYMMDD_HHMM_developer_phaseN.md` |
 | Security Analyst | `.cursor/agents/security-analyst.md` | After each developer phase; before gate opens | `security-analyst-guide`, `recall` | `logs/YYYYMMDD_HHMM_security-analyst_phaseN.md` |
+| Eval Agent | `.cursor/agents/eval-agent.md` | After Phase 4 (agent + API complete); before Phase 5 gate | `recall` | `logs/YYYYMMDD_HHMM_eval_phaseN.md` |
 | Audit | *(not yet created)* | After each developer phase | `python-guide`, `tdd`, `recall` | `logs/YYYYMMDD_HHMM_audit_phaseN.md` |
 | UX Writer | `.cursor/agents/ux-writer.md` | UI copy, labels, errors, onboarding | *(none — self-contained)* | Copy delivered inline |
 | Prompt Engineer | `.cursor/agents/prompt-engineer.md` | Write/review agent system prompts and `@function_tool` docstrings | `recall` | `logs/YYYYMMDD_HHMM_prompt-engineer_<descriptor>.md` |
 
-**Gate rule:** Phase N does not open until `developer_phaseN` = COMPLETE and `security_phaseN` = PASS and `audit_phaseN` = PASS with no FAIL items.
+**Gate rule:** Phase N does not open until `developer_phaseN` = COMPLETE and `security_phaseN` = PASS and `eval_phaseN` = PASS and `audit_phaseN` = PASS with no FAIL items.
 
 ---
 
@@ -119,6 +120,7 @@ Everything in `.claude/`. Update this table whenever a file is added or removed.
 | `solution-architect.md` | Phase 0 architecture decisions; produces build contract | Ask Cursor to act as Solution Architect |
 | `distinguished-engineer.md` | Phases 1–5 implementation; reads architect recall | Ask Cursor to act as Developer Agent |
 | `security-analyst.md` | Post-phase security audit; produces PASS/FAIL/PARTIAL report covering OWASP, AI security, PII, SOC2, GDPR, Fair Housing Act | Ask Cursor to act as Security Analyst |
+| `eval-agent.md` | Runs JSONL test cases through the agent; scores output against expected; produces PASS/FAIL/PARTIAL eval report | Ask Cursor to act as Eval Agent |
 | `ux-writer.md` | UI copy, button labels, error messages, onboarding flows | Ask Cursor to act as UX Writer |
 | `prompt-engineer.md` | Write/review system prompts and `@function_tool` docstrings; anti-pattern audit of agent files | Ask Cursor to act as Prompt Engineer |
 | *(audit_agent.md — not yet created)* | Post-phase correctness verification; produces PASS/FAIL audit report | — |

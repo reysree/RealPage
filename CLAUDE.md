@@ -4,6 +4,26 @@ Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-s
 
 **Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
 
+## 0. Environment and Paths
+
+**Repo layout:**
+```
+realpage/          ← repo root; run all Python commands from here
+  backend/         ← FastAPI + Python package
+  frontend/        ← Vite/React app; Claude Code launches here
+  .claude/         ← agents, skills, hooks, settings
+  .cursor/         ← mirrored harness config
+```
+
+Claude Code's working directory is `frontend/`. All Python commands must be run from the repo root (one level up). Use `..` — never hardcode an OS-level absolute path.
+
+```powershell
+Set-Location ..; python -m backend.eval_runner
+Set-Location ..; uvicorn backend.main:app --reload
+```
+
+Use the **PowerShell tool** for all shell commands on this machine — Bash does not resolve Windows paths.
+
 ## 1. Think Before Coding
 
 **Don't assume. Don't hide confusion. Surface tradeoffs.**
@@ -81,13 +101,15 @@ The test: Would a careful colleague with no stake in your mood say the same thin
 
 ---
 
-# RealPage Lumina
+# Context-Aware Message-Sending Bot
 
 ## Project
 
-AI-native property management platform. The agent IS the application — handling leasing intelligence, resident services, operational queries, and analytics through a tool-driven agent architecture. Layers swap independently; interface contracts never change.
+Autonomous outreach agent for property management. The agent reads structured input records (user profile, consent flags, channel preferences, lifecycle context) and decides dynamically: whether to communicate, which channel to use, what to say, and when to send. No rules are hardcoded — the agent infers communication logic from the input data alone.
 
-**Stack:** FastAPI · OpenAI Agents SDK · ChromaDB · SQLite · React + Tailwind
+Evaluation uses a JSONL test harness where each case defines `input`, `assertions`, `thresholds`, and `expected` output. The Eval Agent scores generated output against expected using semantic similarity and assertion checks.
+
+**Stack:** FastAPI · LangGraph · OpenAI SDK · ChromaDB · SQLite · React + Tailwind
 
 ---
 
@@ -100,11 +122,12 @@ Fixed responsibilities. Do not add agents without updating this table and the Ha
 | Solution Architect | `.claude/agents/solution-architect.md` | Phase 0; major requirement changes | `architecture-decision-skill`, `openai-sdk-guide`, `recall` | `recall/YYYYMMDD_HHMM_architect_phase0.md` + `logs/` checkpoint |
 | Developer | `.claude/agents/distinguished-engineer.md` | Phases 1–5; fixing audit flags | `python-guide`, `openai-sdk-guide`, `react-guide`, `tdd`, `recall` | `logs/YYYYMMDD_HHMM_developer_phaseN.md` |
 | Security Analyst | `.claude/agents/security-analyst.md` | After each developer phase; before gate opens | `security-analyst-guide`, `recall` | `logs/YYYYMMDD_HHMM_security-analyst_phaseN.md` |
+| Eval Agent | `.claude/agents/eval-agent.md` | After Phase 4 (agent + API complete); before Phase 5 gate | `recall` | `logs/YYYYMMDD_HHMM_eval_phaseN.md` |
 | Audit | *(not yet created)* | After each developer phase | `python-guide`, `tdd`, `recall` | `logs/YYYYMMDD_HHMM_audit_phaseN.md` |
 | UX Writer | `.claude/agents/ux-writer.md` | UI copy, labels, errors, onboarding | *(none — self-contained)* | Copy delivered inline |
 | Prompt Engineer | `.claude/agents/prompt-engineer.md` | Write/review agent system prompts and `@function_tool` docstrings | `recall` | `logs/YYYYMMDD_HHMM_prompt-engineer_<descriptor>.md` |
 
-**Gate rule:** Phase N does not open until `developer_phaseN` = COMPLETE and `security_phaseN` = PASS and `audit_phaseN` = PASS with no FAIL items.
+**Gate rule:** Phase N does not open until `developer_phaseN` = COMPLETE and `security_phaseN` = PASS and `eval_phaseN` = PASS and `audit_phaseN` = PASS with no FAIL items.
 
 ---
 
@@ -119,6 +142,7 @@ Everything in `.claude/`. Update this table whenever a file is added or removed.
 | `solution-architect.md` | Phase 0 architecture decisions; produces build contract | Ask Claude to act as Solution Architect |
 | `distinguished-engineer.md` | Phases 1–5 implementation; reads architect recall | Ask Claude to act as Developer Agent |
 | `security-analyst.md` | Post-phase security audit; produces PASS/FAIL/PARTIAL report covering OWASP, AI security, PII, SOC2, GDPR, Fair Housing Act | Ask Claude to act as Security Analyst |
+| `eval-agent.md` | Runs JSONL test cases through the agent; scores output against expected; produces PASS/FAIL/PARTIAL eval report | Ask Claude to act as Eval Agent |
 | `ux-writer.md` | UI copy, button labels, error messages, onboarding flows | Ask Claude to act as UX Writer |
 | `prompt-engineer.md` | Write/review system prompts and `@function_tool` docstrings; anti-pattern audit of agent files | Ask Claude to act as Prompt Engineer |
 | *(audit_agent.md — not yet created)* | Post-phase correctness verification; produces PASS/FAIL audit report | — |
@@ -223,22 +247,24 @@ def my_function(param: type) -> type:
     """
 ```
 
-### Every `@function_tool`
+### Every LangGraph node function
+
+Node functions are **not** `@function_tool` decorated. They take `GraphState` and return `GraphState`.
+
 ```python
-@function_tool
-def tool_name(param: str) -> str:
+def node_name(state: GraphState) -> GraphState:
     """
-    TOOL: <name>
-    Purpose: <what it does for the agent — one sentence>
-    When called: <specific user intent or situation that triggers this tool>
-    Returns: {"field": type, "field": type}  # actual JSON shape, not prose
-    Note: Atomic — one responsibility, no overlap with other tools.
+    NODE: <name>
+    Purpose: <what this node decides — one sentence>
+    Reads from state: <fields this node reads>
+    Writes to state: <fields this node writes>
+    Audit: appends one entry to state["audit_trail"] with {node, decision, reasoning, timestamp}
+    Note: Atomic — one decision per node, no overlap with adjacent nodes.
     """
 ```
 
-All four fields are required. `When called` must differ from `Purpose` —
-it names the trigger, not the action. `Returns` must show the JSON structure,
-not describe it in a sentence.
+All four descriptor lines are required. `Writes to state` must list only the fields this node
+is the primary writer for. Every node must append to `audit_trail` before returning.
 
 ### Boundary rules
 - FastAPI routes: input and output are Pydantic models — no raw dicts
@@ -279,26 +305,38 @@ Update when any file is added or removed.
 
 ```
 backend/
-    main.py          → FastAPI app: routes, CORS, lifespan startup
-    agent.py         → Agent definition, system prompt, tool registration
-    db.py            → SQLite session and message persistence
-    schemas.py       → Pydantic models for all API boundaries
+    main.py           → FastAPI app: routes, CORS, lifespan startup
+    graph.py          → LangGraph StateGraph: six nodes wired in sequence, conditional edge, compiled graph
+    agent.py          → FastAPI adapter: creates GraphState from RunRequest, invokes compiled_graph, persists to SQLite
+    graph_state.py    → GraphState TypedDict: all fields passed between LangGraph nodes
+    db.py             → SQLite persistence for run history and eval results
+    schemas.py        → Pydantic models for all API boundaries (RunRequest, OutputMessage, etc.)
+    eval_runner.py    → Loads JSONL cases, runs each through agent.run_case(), scores against expected
     tools/
-        __init__.py  → ALL_TOOLS list — the only place tools are registered
-        search.py    → search_knowledge_base (ChromaDB semantic search)
-        calculate.py → calculate (deterministic numeric operations)
+        __init__.py         → exports all node functions (no ALL_TOOLS list; registration is graph edges in graph.py)
+        consent.py          → consent_node(state): validates channel eligibility given opt-in flags; appends audit entry
+        channel_selector.py → channel_node(state): picks best channel from preferences ∩ eligible_channels; appends audit entry
+        message_composer.py → composer_node(state): calls OpenAI API; generates message body and CTA; appends audit entry
+        timing.py           → timing_node(state): computes send_at from timezone + lifecycle window rules; appends audit entry
+        compliance.py       → compliance_node(state): validates Fair Housing, PII, opt-out; corrects or blocks; appends audit entry
     data/
-        sample.json  → Seed data loaded into ChromaDB at startup
+        sample.jsonl  → JSONL test cases: each line is input + assertions + thresholds + expected
+
+evals/
+    runner.py   → CLI harness: runs all JSONL cases, outputs per-case and aggregate score report
+    scorer.py   → Semantic similarity + assertion scoring against expected output fields
 
 frontend/
-    src/App.jsx      → Chat UI: message thread, tool badges, input
-    src/api.js       → sendMessage() and clearSession() — no fetch() in components
+    src/App.jsx      → Eval runner UI: load cases, run agent, display scores and pass/fail per case
+    src/api.js       → runCase() and runAll() — no fetch() in components
     src/main.jsx     → React DOM entry point
     src/index.css    → Tailwind directives
 
 .claude/
-    agents/          → solution-architect.md, distinguished-engineer.md, security-analyst.md, ux-writer.md, prompt-engineer.md
-    skills/          → python-guide, openai-sdk-guide, architecture-decision-skill, react-guide, tdd, recall, security-analyst-guide, harness-guide
+    agents/          → solution-architect.md, distinguished-engineer.md, security-analyst.md,
+                       eval-agent.md, ux-writer.md, prompt-engineer.md
+    skills/          → python-guide, openai-sdk-guide, architecture-decision-skill, react-guide,
+                       tdd, recall, security-analyst-guide, harness-guide
     commands/        → audit-codebase.md, recall.md
     scripts/         → audit.sh (Stop hook), pre-write-check.sh (PreToolUse hook)
     settings.json    → hooks: PreToolUse(Write), Stop
