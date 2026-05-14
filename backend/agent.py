@@ -40,9 +40,22 @@ def _parse_tool_result(raw_result: str, tool_name: str) -> dict[str, Any]:
     return result
 
 
+def _compute_follow_up_spacing_days(days_until_move: int) -> int:
+    """
+    Turn move-horizon days into a bounded follow-up delay for open-stage prospects.
+
+    Args:
+        days_until_move: Whole days from last-interaction date to move-date target.
+    Returns:
+        Days until the next nurture touch (clamped between 3 and 21).
+    """
+
+    return max(3, min(21, days_until_move // 20))
+
+
 def _build_next_action(request: RunRequest) -> NextAction:
     """
-    Build the recommended next action from persona and move-date horizon.
+    Build the recommended next action from persona, lifecycle, and move-date horizon.
 
     Args:
         request: Validated outreach run request.
@@ -54,19 +67,22 @@ def _build_next_action(request: RunRequest) -> NextAction:
     interaction_date = request.input.last_interaction.date()
     days_until_move = (move_date - interaction_date).days
 
-    if request.persona == "prospect" and days_until_move < 45:
+    if days_until_move < 45:
         return NextAction(
             type="start_cadence",
             name="prospect_welcome_short_horizon",
         )
 
-    if request.persona == "prospect":
+    if request.lifecycle_stage == "open":
         return NextAction(
-            type="start_cadence",
-            name="prospect_welcome_long_horizon",
+            type="follow_up_in_days",
+            value=_compute_follow_up_spacing_days(days_until_move),
         )
 
-    return NextAction(type="follow_up_in_days", value=3)
+    return NextAction(
+        type="start_cadence",
+        name="prospect_welcome_long_horizon",
+    )
 
 
 def _dump_output(agent_output: AgentOutput) -> dict[str, Any]:
@@ -90,7 +106,17 @@ def _empty_output() -> dict[str, Any]:
         Agent output dictionary with send=false and all message fields empty.
     """
 
-    return _dump_output(AgentOutput(send=False, next_message=None, next_action=None))
+    return _dump_output(
+        AgentOutput(
+            send=False,
+            next_message=None,
+            next_action=NextAction(
+                type="human_in_the_loop",
+                name="pipeline_blocked",
+                value=None,
+            ),
+        )
+    )
 
 
 def _parse_compose_tool(raw_tool_json: str) -> dict[str, Any] | None:
@@ -136,14 +162,15 @@ def _extract_text_fields(request: RunRequest) -> dict[str, str]:
         "persona": request.persona,
         "lifecycle_stage": request.lifecycle_stage,
         "property_name": request.input.property_name,
+        "profile.first_name": request.input.profile.first_name,
     }
-    if request.input.profile.first_name:
-        fields["profile.first_name"] = request.input.profile.first_name
     if request.input.profile.city_interest:
         fields["profile.city_interest"] = request.input.profile.city_interest
     if request.input.profile.amenity_interest:
         for i, item in enumerate(request.input.profile.amenity_interest):
             fields[f"profile.amenity_interest[{i}]"] = item
+    if request.input.listing_url:
+        fields["input.listing_url"] = str(request.input.listing_url)
     if request.assertions.constraints.brand_style_notes:
         fields["constraints.brand_style_notes"] = request.assertions.constraints.brand_style_notes
     if request.assertions.constraints.compliance_suffix:
@@ -208,7 +235,7 @@ def run_agent(case_input: dict[str, Any]) -> dict[str, Any]:
         profile=request.input.profile.model_dump(exclude_none=True),
         property_name=request.input.property_name,
         primary_cta=constraints.get("primary_cta", "book_tour"),
-        constraints=request.assertions.constraints.model_dump(exclude_none=True),
+        constraints=constraints,
         consent_verification={
             "channel": consent_for_channel.get("channel"),
             "eligible": consent_for_channel.get("eligible"),

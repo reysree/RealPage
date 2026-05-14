@@ -98,6 +98,130 @@ def test_run_route_rejects_unknown_top_level_keys() -> None:
     assert response.status_code == 422
 
 
+def test_run_route_rejects_unknown_assertions_keys() -> None:
+    """
+    Verify assertions objects cannot include fields outside the schema contract.
+    """
+
+    record = load_sample_record(0)
+    record["assertions"]["shadow_audience"] = "test-only"
+
+    response = TestClient(app).post("/run", json=record)
+
+    assert response.status_code == 422
+
+
+def test_run_route_rejects_unknown_expected_keys() -> None:
+    """
+    Verify expected-output fixtures cannot carry undeclared keys.
+    """
+
+    record = load_sample_record(0)
+    record["expected"]["confidence_score"] = 0.99
+
+    response = TestClient(app).post("/run", json=record)
+
+    assert response.status_code == 422
+
+
+def test_run_route_rejects_profanity_in_profile_first_name() -> None:
+    """
+    Verify profanity in input text fails validation before the agent runs.
+    """
+
+    record = load_sample_record(0)
+    record["input"]["profile"]["first_name"] = "fuck"
+
+    response = TestClient(app).post("/run", json=record)
+
+    assert response.status_code == 422
+    assert "fuck" not in response.text
+
+
+def test_run_route_rejects_violent_extremism_phrase_in_property_name() -> None:
+    """
+    Verify violent-extremism phrases in marketing copy fail validation.
+    """
+
+    record = load_sample_record(0)
+    record["input"]["property_name"] = "Sieg Heil Memorial Lofts"
+
+    response = TestClient(app).post("/run", json=record)
+
+    assert response.status_code == 422
+    assert "Heil" not in response.text
+
+
+def test_run_route_rejects_non_public_listing_url() -> None:
+    """
+    Optional listing_url must be a safe public http(s) target when present.
+    """
+
+    record = load_sample_record(0)
+    record["input"]["listing_url"] = "http://127.0.0.1/internal"
+
+    response = TestClient(app).post("/run", json=record)
+
+    assert response.status_code == 422
+
+
+def test_run_route_accepts_optional_https_listing_url() -> None:
+    """
+    Verify a normal optional listing URL validates and the pipeline can succeed.
+    """
+
+    record = load_sample_record(0)
+    record["input"]["listing_url"] = "https://oakridge.example/tours"
+
+    with patch(
+        "backend.agent.compose_message",
+        side_effect=lambda *args, **kwargs: compose_message_json_for_case(record),
+    ):
+        response = TestClient(app).post("/run", json=record)
+
+    assert response.status_code == 200
+    assert response.json()["output"]["send"] is True
+
+
+def test_run_route_blocks_embedded_private_url_in_constraint_notes() -> None:
+    """
+    Embedded malicious/private URLs in screened fields must stop the agent (no send).
+    """
+
+    record = load_sample_record(0)
+    record["assertions"]["constraints"]["brand_style_notes"] = (
+        "See specials at https://10.0.0.5/admin — urgent."
+    )
+
+    with patch(
+        "backend.agent.compose_message",
+        side_effect=lambda *args, **kwargs: compose_message_json_for_case(record),
+    ):
+        response = TestClient(app).post("/run", json=record)
+
+    assert response.status_code == 200
+    payload = response.json()["output"]
+    assert payload["send"] is False
+    assert payload["next_action"] == {
+        "type": "human_in_the_loop",
+        "name": "pipeline_blocked",
+        "value": None,
+    }
+
+
+def test_run_route_rejects_localhost_in_allowed_link_domains() -> None:
+    """
+    Hostname allowlists must not reference loopback or non-public hosts.
+    """
+
+    record = load_sample_record(0)
+    record["assertions"]["constraints"]["allowed_link_domains"] = ["localhost"]
+
+    response = TestClient(app).post("/run", json=record)
+
+    assert response.status_code == 422
+
+
 def test_run_route_sanitizes_validation_errors() -> None:
     """
     Verify validation errors do not echo submitted PII-like values.

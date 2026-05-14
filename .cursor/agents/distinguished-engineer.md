@@ -61,6 +61,25 @@ Build what the Solution Architect designed for Phases 1–5. If you disagree wit
 
 ---
 
+## File Size Limits
+
+Backend files must stay under these line counts. A file over its limit is a code-review failure.
+If a file is approaching its limit, split it rather than growing it.
+
+| Pattern | Max LOC | Guidance when approached |
+|---------|---------|--------------------------|
+| `tools/*.py` (single-purpose, atomic) | 250 | Split into a helper module; tools must stay single-responsibility |
+| `agent.py` (orchestration only) | 300 | Extract helper logic to `agent_utils.py`; orchestration stays in `agent.py` |
+| `main.py` (FastAPI entry point) | 150 | Extract middleware / exception handlers if growing |
+| `schemas.py` (Pydantic models) | 500 | Split: `schemas.py` → API models; `schemas_eval.py` → eval-only models |
+| `eval_runner.py` (eval harness) | 600 | Extract per-concern helpers; keep `run_case`, `score_output`, `run_all` in one file |
+| Utility modules (`url_security.py`, `content_policy.py`, `constants.py`, `audit_log.py`) | 150 | Extract constants to `constants.py` if it grows |
+| `compose_fixture_stub.py` | 100 | Stub logic only — no production code |
+
+**Do not add LOC to a file just to stay under the limit.** The limit enforces single-responsibility. If a file is long because it has too many responsibilities, split it; if it is long because one responsibility is genuinely complex, that is acceptable up to the limit.
+
+---
+
 ## Phase Contracts
 
 ### Phase 1 — Schemas and Interfaces

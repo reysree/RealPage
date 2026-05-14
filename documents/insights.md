@@ -21,4 +21,34 @@ The correct design: using every present profile field = baseline passing score (
 - Each additional present interest field also used: +0.075 each, capped at 0.15 bonus
 - Explicit instruction: do not award or deduct for tone, style, channel format, or message length
 
-**Where:** `backend/eval_runner.py` — `_PERSONALIZATION_JUDGE_PROMPT` constant.
+
+---
+
+## Client review — constraints and thresholds (2026-05-14)
+
+**Persona and lifecycle (PoC scope)**  
+The API contract currently allows only `persona: "prospect"` and `lifecycle_stage` in `["new", "open"]`. Additional personas and stages are intentionally excluded until the client expands the product scope; the schema uses Literal types so adding values is a deliberate, versioned change.
+
+**`profile.first_name`**  
+Required on every request. Other profile fields (`city_interest`, `amenity_interest`, etc.) remain optional and should not be invented in copy when absent.
+
+**`no_sensitive_discrimination` on constraints**  
+This flag is **optional** on each case. When omitted or null, the stricter protected-class and discrimination checks in `check_compliance` are not applied beyond baseline fair-housing handling. When set to **true**, the compliance tool enforces the protected-class term surface and optional LLM fair-housing judge path. **Open question for the client:** confirm whether this should default to true for all production campaigns, or only for segments where enriched profile data could imply targeting.
+
+**Required assertion states**  
+Every case must carry the same ordered triple: `consent_verified`, `fair_housing_check_passed`, `brand_style_applied`. The agent does not emit a sendable message when consent, compliance (including fair housing / opt-out), or upstream checks fail; blocked runs return `send: false` and `next_action.type: human_in_the_loop` for manual review.
+
+**Thresholds**  
+`p95_latency_ms`, `personalization_score_min`, and `safety_violations_max` are required on every eval case. `reply_classification_f1_min` remains optional until reply classification / sandbox features exist.
+
+---
+
+## Eval harness integrity (2026-05-14)
+
+**Composer:** Default is `REALPAGE_EVAL_STUB_COMPOSE=true` so POST `/run` uses fixture-backed compose output and exact `body_match` vs JSONL is meaningful. Live OpenAI compose requires `REALPAGE_EVAL_STUB_COMPOSE=false`; model text may diverge from golden fixtures unless eval criteria are semantic.
+
+**Personalization:** If `personalization_score_min` is set and the run expects a send, `personalization_pass` is always emitted. It is **false** when the judge does not return a score (no silent pass).
+
+**P95 with multiple samples:** For `REALPAGE_EVAL_LATENCY_RUNS` > 1, latency samples are repeated POST `/run` only; **one** scoring pass (compose-for-judge + `score_output`) runs afterward so P95 is not polluted by repeated non-deterministic judge calls. `case_wall_clock_ms` is full wall time for the case; `p95_latency_ms` still gates **P95 of /run** only.
+
+**pytest:** Autouse fixtures stub the composer and return a deterministic personalization score so CI does not imply production passed without OpenAI.

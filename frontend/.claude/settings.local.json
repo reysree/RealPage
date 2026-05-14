@@ -12,7 +12,20 @@
       "WebFetch(domain:openai.com)",
       "WebFetch(domain:raw.githubusercontent.com)",
       "WebFetch(domain:cookbook.openai.com)",
-      "WebFetch(domain:developers.openai.com)"
+      "WebFetch(domain:developers.openai.com)",
+      "PowerShell(cd C:\\\\reysree\\\\realpage; \\(Get-Content backend/data/sample.jsonl | Measure-Object -Line\\).Lines)",
+      "Bash(Remove-Item *)",
+      "PowerShell(Set-Location C:\\\\reysree\\\\realpage; \\(Get-Content backend\\\\data\\\\sample.jsonl | Measure-Object -Line\\).Lines)",
+      "Bash(backend/.venv/Scripts/python.exe -m pytest tests/ -x -q)",
+      "PowerShell($py = \"C:\\\\reysree\\\\realpage\\\\backend\\\\.venv\\\\Scripts\\\\python.exe\"; Set-Location \"C:\\\\reysree\\\\realpage\"; & $py -m pytest tests\\\\ -x -q 2>&1)",
+      "PowerShell(Write-Output $PWD.Path)",
+      "PowerShell(python --version 2>&1; Write-Output \"---\"; Get-ChildItem \"backend\" -ErrorAction SilentlyContinue | Select-Object -First 5 Name)",
+      "PowerShell($py = \"C:\\\\reysree\\\\realpage\\\\backend\\\\.venv-evals\\\\Scripts\\\\python.exe\"; & $py -m pytest \"C:\\\\reysree\\\\realpage\\\\tests\" -x -q 2>&1)",
+      "PowerShell($py = \"C:\\\\reysree\\\\realpage\\\\backend\\\\.venv-evals\\\\Scripts\\\\python.exe\"; & $py -m pytest \"C:\\\\reysree\\\\realpage\\\\tests\" -q 2>&1)",
+      "PowerShell($py = \"C:\\\\reysree\\\\realpage\\\\backend\\\\.venv-evals\\\\Scripts\\\\python.exe\"; & $py -m py_compile \"C:\\\\reysree\\\\realpage\\\\backend\\\\tools\\\\compliance.py\" \"C:\\\\reysree\\\\realpage\\\\backend\\\\content_policy.py\" \"C:\\\\reysree\\\\realpage\\\\backend\\\\schemas.py\" 2>&1; Write-Output \"syntax_ok\")",
+      "PowerShell(Set-Location \"C:\\\\reysree\\\\realpage\"; $py = \"C:\\\\reysree\\\\realpage\\\\backend\\\\.venv-evals\\\\Scripts\\\\python.exe\"; & $py -c \"from backend.tools.compliance import check_compliance, OPT_OUT_PATTERN; print\\('compliance ok'\\)\"; & $py -c \"from backend.content_policy import analyze_inappropriate_content, outreach_input_must_pass_language_policy; print\\('content_policy ok'\\)\"; & $py -c \"from backend.schemas import RunResponse, AgentOutput, RunRequest; print\\('schemas ok'\\)\" 2>&1)",
+      "PowerShell(Get-Content *)",
+      "PowerShell(Set-Location \"C:\\\\reysree\\\\realpage\"; $py = \"C:\\\\reysree\\\\realpage\\\\backend\\\\.venv-evals\\\\Scripts\\\\python.exe\"; & $py -m backend.eval_runner --latency-runs 3 2>&1)"
     ]
   }
 }

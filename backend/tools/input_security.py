@@ -9,7 +9,15 @@ import logging
 import re
 from typing import NamedTuple
 
+from backend.content_policy import analyze_inappropriate_content
+from backend.url_security import analyze_url_security, extract_http_urls_from_text
+
 logger = logging.getLogger(__name__)
+
+_DANGEROUS_SCHEME = re.compile(
+    r"\b(?:javascript|data|vbscript)\s*:",
+    re.IGNORECASE,
+)
 
 
 class _PatternGroup(NamedTuple):
@@ -121,7 +129,8 @@ _RISK_ORDER = {"low": 0, "medium": 1, "high": 2}
 def check_input_security(text_fields: dict[str, str]) -> str:
     """
     TOOL: check_input_security
-    Purpose: Screen all free-text input fields for prompt injection, malicious code, social engineering, and sensitive data using compiled regex patterns.
+    Purpose: Screen all free-text input fields for prompt injection, malicious code,
+        social engineering, sensitive-data patterns, and prohibited language.
     When called: First step in run_agent(), before channel selection or message composition.
     Returns: {"error": null, "result": {"passed": bool, "risk_level": str, "flags": list[str], "blocked_fields": list[str]}}
     Note: Atomic — regex screening only; zero network calls, no API key required.
@@ -140,6 +149,40 @@ def check_input_security(text_fields: dict[str, str]) -> str:
         for field_name, value in text_fields.items():
             if not value:
                 continue
+
+            bad_language = analyze_inappropriate_content(value.strip())
+            if bad_language:
+                flags.append(
+                    f"INAPPROPRIATE_CONTENT:{field_name}:{','.join(bad_language)}"
+                )
+                if _RISK_ORDER["high"] > _RISK_ORDER[max_risk]:
+                    max_risk = "high"
+                if field_name not in blocked_fields:
+                    blocked_fields.append(field_name)
+                continue
+
+            if _DANGEROUS_SCHEME.search(value):
+                flags.append(f"DANGEROUS_URL_SCHEME:{field_name}")
+                if _RISK_ORDER["high"] > _RISK_ORDER[max_risk]:
+                    max_risk = "high"
+                if field_name not in blocked_fields:
+                    blocked_fields.append(field_name)
+                continue
+
+            embedded_bad = False
+            for candidate in extract_http_urls_from_text(value):
+                url_issues = analyze_url_security(candidate)
+                if url_issues:
+                    flags.append(f"UNSAFE_URL:{field_name}:{','.join(url_issues)}")
+                    if _RISK_ORDER["high"] > _RISK_ORDER[max_risk]:
+                        max_risk = "high"
+                    if field_name not in blocked_fields:
+                        blocked_fields.append(field_name)
+                    embedded_bad = True
+                    break
+            if embedded_bad:
+                continue
+
             for group in _ALL_GROUPS:
                 for pattern in group.patterns:
                     if pattern.search(value):

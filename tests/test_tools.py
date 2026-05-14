@@ -11,11 +11,12 @@ from unittest.mock import patch
 import pytest
 from pydantic import ValidationError
 
-from backend.schemas import ComposerLlmOutput, FairHousingJudgeLlmOutput
+from backend.schemas_llm import ComposerLlmOutput, FairHousingJudgeLlmOutput
 from backend.tools import ALL_TOOLS
 from backend.tools.channel_selector import select_channel
 from backend.tools.compliance import check_compliance
 from backend.tools.consent import check_consent
+from backend.tools.input_security import check_input_security
 from backend.tools.message_composer import compose_message
 from backend.tools.timing import determine_send_time
 
@@ -395,6 +396,34 @@ def test_composer_requires_email_subject(mock_sleep, monkeypatch) -> None:
     result = parse_tool_result(raw)
     assert result["result"] is None
     assert result["error_code"] == "COMPOSER_LLM_RETRY_EXHAUSTED"
+
+
+def test_input_security_blocks_embedded_private_url() -> None:
+    """
+    Verify prose fields carrying http(s) links to non-public hosts fail screening.
+    """
+
+    payload = parse_tool_result(
+        check_input_security(
+            {"constraints.brand_style_notes": "Compare rates at https://192.168.1.10/x"},
+        )
+    )
+
+    assert payload["result"]["passed"] is False
+    assert any("UNSAFE_URL" in flag for flag in payload["result"]["flags"])
+
+
+def test_input_security_blocks_dangerous_scheme_tokens() -> None:
+    """
+    Verify javascript:/data: style payloads are blocked even without http parsing.
+    """
+
+    payload = parse_tool_result(
+        check_input_security({"property_name": 'Click javascript:alert(1) now'}),
+    )
+
+    assert payload["result"]["passed"] is False
+    assert any("DANGEROUS_URL_SCHEME" in flag for flag in payload["result"]["flags"])
 
 
 def test_all_tools_exports_every_phase2_tool() -> None:

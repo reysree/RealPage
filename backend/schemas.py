@@ -4,133 +4,37 @@ Purpose: Pydantic models for outreach API inputs, outputs, and eval cases.
 Author: Sreeram
 """
 
-from datetime import date, datetime
-from typing import Annotated, Literal, Self
+from typing import Self
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import (
+    AnyHttpUrl,
     BaseModel,
-    BeforeValidator,
     ConfigDict,
     Field,
-    StringConstraints,
-    ValidationInfo,
     field_validator,
     model_validator,
 )
 
-Channel = Literal["sms", "email", "voice"]
-LanguageCode = Literal["en"]
-ShortText = Annotated[
-    str,
-    StringConstraints(strip_whitespace=True, min_length=1, max_length=80),
-]
-MediumText = Annotated[
-    str,
-    StringConstraints(strip_whitespace=True, min_length=1, max_length=160),
-]
-LongText = Annotated[
-    str,
-    StringConstraints(strip_whitespace=True, min_length=1, max_length=2000),
-]
-ComposerReasonText = Annotated[
-    str,
-    StringConstraints(strip_whitespace=True, min_length=1, max_length=500),
-]
-
-
-def _wire_bool(value: object) -> bool:
-    """
-    Accept only JSON-native booleans — reject 0/1 and \"true\"/\"false\" strings.
-    """
-
-    if isinstance(value, bool):
-        return value
-    raise ValueError("Must be JSON true or false, not a string or number.")
-
-
-def _wire_optional_bool(value: object) -> bool | None:
-    """
-    Accept null or JSON booleans only for optional constraint flags.
-    """
-
-    if value is None:
-        return None
-    return _wire_bool(value)
-
-
-def _wire_int(value: object) -> int:
-    """
-    Accept JSON integers only — reject booleans and floats.
-    """
-
-    if isinstance(value, bool):
-        raise ValueError("Integer threshold cannot be a boolean.")
-    if isinstance(value, int):
-        return value
-    raise ValueError("Must be a JSON integer, not a float or string.")
-
-
-def _wire_optional_int(value: object) -> int | None:
-    """
-    Accept null or JSON integers for optional integer thresholds.
-    """
-
-    if value is None:
-        return None
-    return _wire_int(value)
-
-
-def _wire_optional_float(value: object) -> float | None:
-    """
-    Accept null or JSON numbers for float thresholds — not strings or booleans.
-    """
-
-    if value is None:
-        return None
-    if isinstance(value, bool):
-        raise ValueError("Float threshold cannot be a boolean.")
-    if isinstance(value, float):
-        return value
-    if isinstance(value, int):
-        return float(value)
-    raise ValueError("Must be a JSON number.")
-
-
-def _iso_date_wire(value: object) -> date:
-    """
-    Parse move date from JSON string YYYY-MM-DD or an existing date object.
-    """
-
-    if isinstance(value, datetime):
-        return value.date()
-    if isinstance(value, date):
-        return value
-    if isinstance(value, str):
-        return date.fromisoformat(value)
-    raise ValueError("Date must be an ISO 8601 date string (YYYY-MM-DD).")
-
-
-def _iso_datetime_wire(value: object) -> datetime:
-    """
-    Parse last interaction from ISO 8601 JSON string or an existing datetime.
-    """
-
-    if isinstance(value, datetime):
-        return value
-    if isinstance(value, str):
-        normalized = value.replace("Z", "+00:00") if value.endswith("Z") else value
-        return datetime.fromisoformat(normalized)
-    raise ValueError("Datetime must be an ISO 8601 string or datetime.")
-
-
-JsonBoolean = Annotated[bool, BeforeValidator(_wire_bool)]
-OptionalJsonBoolean = Annotated[bool | None, BeforeValidator(_wire_optional_bool)]
-JsonInt = Annotated[int, BeforeValidator(_wire_int)]
-OptionalJsonInt = Annotated[int | None, BeforeValidator(_wire_optional_int)]
-OptionalJsonFloat = Annotated[float | None, BeforeValidator(_wire_optional_float)]
-IsoDate = Annotated[date, BeforeValidator(_iso_date_wire)]
-IsoDateTime = Annotated[datetime, BeforeValidator(_iso_datetime_wire)]
+from backend.content_policy import outreach_input_must_pass_language_policy
+from backend.schemas_types import (
+    REQUIRED_ASSERTION_STATES,
+    Channel,
+    IsoDate,
+    IsoDateTime,
+    JsonBoolean,
+    JsonFloat,
+    JsonInt,
+    LanguageCode,
+    LifecycleKind,
+    LongText,
+    MediumText,
+    OptionalJsonBoolean,
+    OptionalJsonFloat,
+    PersonaKind,
+    ShortText,
+)
+from backend.url_security import analyze_plain_hostname, analyze_url_security
 
 
 class ConsentRecord(BaseModel):
@@ -152,10 +56,7 @@ class UserProfile(BaseModel):
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    first_name: ShortText | None = Field(
-        None,
-        description="Recipient first name.",
-    )
+    first_name: ShortText = Field(..., description="Recipient first name.")
     city_interest: MediumText | None = Field(
         None,
         description="City or area of interest.",
@@ -192,6 +93,36 @@ class InputRecord(BaseModel):
     )
     language: LanguageCode = Field(..., description="Preferred language code.")
     profile: UserProfile = Field(..., description="Profile personalization facts.")
+    listing_url: AnyHttpUrl | None = Field(
+        None,
+        description="Optional listing or tour URL (https recommended); must be a public http(s) target.",
+    )
+
+    @field_validator("listing_url", mode="before")
+    @classmethod
+    def listing_url_blank_is_none(cls, value: object) -> object:
+        """
+        Treat empty strings as absent so optional URLs stay omitted in JSON.
+        """
+
+        if value is None or value == "":
+            return None
+        return value
+
+    @field_validator("listing_url")
+    @classmethod
+    def listing_url_must_pass_security(cls, value: AnyHttpUrl | None) -> AnyHttpUrl | None:
+        """
+        Reject malformed URLs and unsafe targets (localhost, private IP, credentials).
+        """
+
+        if value is None:
+            return None
+        if analyze_url_security(str(value)):
+            raise ValueError(
+                "Listing URL is malformed or points to a non-public or unsafe target."
+            )
+        return value
 
     @field_validator("timezone")
     @classmethod
@@ -214,28 +145,53 @@ class AssertionConstraints(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    no_pii_leak: OptionalJsonBoolean = Field(None, description="Whether PII leakage is forbidden.")
+    no_pii_leak: JsonBoolean = Field(
+        ...,
+        description="Whether PII leakage is forbidden — must be true for production sends.",
+    )
     no_sensitive_discrimination: OptionalJsonBoolean = Field(
         None,
-        description="Whether protected-class targeting is forbidden.",
+        description="Whether protected-class targeting is forbidden (optional; enable per campaign).",
     )
-    include_opt_out_instructions: OptionalJsonBoolean = Field(
-        None,
-        description="Whether opt-out language must be present.",
+    include_opt_out_instructions: JsonBoolean = Field(
+        ...,
+        description="Whether opt-out language must be present — must be true for production sends.",
     )
-    primary_cta: ShortText | None = Field(
-        None,
-        description="Required primary CTA intent.",
-    )
+    primary_cta: ShortText = Field(..., description="Required primary CTA intent.")
     brand_style_notes: LongText | None = Field(
         None,
         description="Case-specific brand voice or style notes for the composer LLM.",
     )
-    compliance_suffix: LongText | None = Field(
-        None,
+    compliance_suffix: LongText = Field(
+        ...,
         description="Exact trailing compliance line appended after the composed body "
         "when include_opt_out_instructions is true; avoids hardcoded opt-out copy in code.",
     )
+    allowed_link_domains: list[MediumText] | None = Field(
+        None,
+        max_length=20,
+        description="Hostname allowlist (lowercase) for URLs embedded in the composed body.",
+    )
+
+    @field_validator("allowed_link_domains")
+    @classmethod
+    def allowed_link_domains_are_public_hostnames(
+        cls,
+        value: list[str] | None,
+    ) -> list[str] | None:
+        """
+        Allowlist entries must be bare public hostnames — no schemes, paths, or unsafe hosts.
+        """
+
+        if value is None:
+            return None
+        for item in value:
+            if analyze_plain_hostname(item):
+                raise ValueError(
+                    "allowed_link_domains must be safe public hostnames only "
+                    "(no URL paths, embedded credentials, or non-public hosts)."
+                )
+        return value
 
 
 class AssertionsRecord(BaseModel):
@@ -243,15 +199,31 @@ class AssertionsRecord(BaseModel):
     Eval assertions that describe required behavioral states and constraints.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     required_states: list[ShortText] = Field(
-        default_factory=list,
+        default_factory=lambda: list(REQUIRED_ASSERTION_STATES),
         max_length=20,
-        description="Named states the run should satisfy.",
+        description="Canonical pipeline states — must match the fixed triple.",
     )
     constraints: AssertionConstraints = Field(
-        default_factory=AssertionConstraints,
+        ...,
         description="Output constraints for compliance and CTA behavior.",
     )
+
+    @field_validator("required_states", mode="after")
+    @classmethod
+    def required_states_are_canonical(cls, value: list[str]) -> list[str]:
+        """
+        Every case carries the same ordered required-states triple; callers cannot substitute.
+        """
+
+        if tuple(value) != REQUIRED_ASSERTION_STATES:
+            raise ValueError(
+                "required_states must be exactly "
+                f"{list(REQUIRED_ASSERTION_STATES)} in that order."
+            )
+        return value
 
 
 class ThresholdsRecord(BaseModel):
@@ -261,17 +233,17 @@ class ThresholdsRecord(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    p95_latency_ms: OptionalJsonInt = Field(None, description="Maximum allowed p95 latency.")
-    personalization_score_min: OptionalJsonFloat = Field(
-        None,
+    p95_latency_ms: JsonInt = Field(..., description="Maximum allowed p95 latency.")
+    personalization_score_min: JsonFloat = Field(
+        ...,
         description="Minimum semantic personalization score.",
     )
     reply_classification_f1_min: OptionalJsonFloat = Field(
         None,
-        description="Minimum reply classification F1 score.",
+        description="Minimum reply classification F1 score (optional until reply stack exists).",
     )
-    safety_violations_max: OptionalJsonInt = Field(
-        None,
+    safety_violations_max: JsonInt = Field(
+        ...,
         description="Maximum allowed safety violations.",
     )
 
@@ -290,134 +262,6 @@ class CtaPayload(BaseModel):
         description="Short reply options for SMS CTAs.",
     )
     link: MediumText | None = Field(None, description="CTA link for email CTAs.")
-
-
-class ComposerCtaLlmOutput(BaseModel):
-    """
-    CTA object inside compose_message LLM JSON only.
-
-    Allowed keys: type (required string), options (optional string array, max 5),
-    link (optional string). No other keys. Types must be JSON-native to each field
-    (strict validation — no string-to-int coercion).
-    """
-
-    model_config = ConfigDict(extra="forbid", strict=True, str_strip_whitespace=True)
-
-    type: ShortText = Field(..., description="CTA category from the model.")
-    options: list[ShortText] | None = Field(
-        None,
-        max_length=5,
-        description="Reply options; each entry must be a non-empty string.",
-    )
-    link: MediumText | None = Field(
-        None,
-        description="URL string for email-style CTAs when present.",
-    )
-
-
-class ComposerLlmOutput(BaseModel):
-    """
-    Exact JSON contract for the compose_message LLM (parse with strict=True).
-
-    Expected top-level keys only: subject, body, cta, message_reason — no extras.
-
-    Types (must match JSON types exactly under strict validation):
-    - subject: string | null (required key may be null; for sms/voice must be null;
-      for email must be a non-empty string)
-    - body: string (non-empty after strip, max 2000 chars)
-    - cta: object matching ComposerCtaLlmOutput
-    - message_reason: string (non-empty after strip, max 500 chars)
-
-    Passing a number, array, or object where a string is required fails validation.
-    """
-
-    model_config = ConfigDict(extra="forbid", strict=True, str_strip_whitespace=True)
-
-    subject: MediumText | None = Field(
-        None,
-        description="Email subject: null/omit for sms and voice only.",
-    )
-    body: LongText = Field(..., description="Primary message body from the model.")
-    cta: ComposerCtaLlmOutput = Field(..., description="Nested CTA; fixed shape.")
-    message_reason: ComposerReasonText = Field(
-        ...,
-        description="Non-empty rationale for the composition.",
-    )
-
-    @field_validator("subject", mode="before")
-    @classmethod
-    def normalize_blank_subject(cls, value: object) -> object:
-        """
-        Treat blank subject as missing so optional subject validates cleanly.
-        """
-
-        if value is None or value == "":
-            return None
-        return value
-
-    @field_validator("body")
-    @classmethod
-    def body_disallows_nul(cls, value: str) -> str:
-        """
-        Reject NUL bytes and other disallowed control characters in model output.
-        """
-
-        if "\x00" in value:
-            raise ValueError("composer_body_contains_nul_byte")
-        for char in value:
-            o = ord(char)
-            if o < 32 and char not in "\n\r\t":
-                raise ValueError("composer_body_contains_disallowed_control_character")
-        return value
-
-    @model_validator(mode="after")
-    def subject_matches_channel(self, info: ValidationInfo) -> Self:
-        """
-        Enforce subject presence rules using validation context channel from the caller.
-        """
-
-        channel = (info.context or {}).get("channel")
-        if channel in ("sms", "voice") and self.subject is not None:
-            raise ValueError("composer_subject_must_be_null_for_sms_or_voice")
-        if channel == "email" and self.subject is None:
-            raise ValueError("composer_email_subject_required")
-        return self
-
-
-class PersonalizationJudgeLlmOutput(BaseModel):
-    """
-    Exact JSON contract for the personalization quality LLM judge.
-
-    score ranges from 0.0 (fully generic) to 1.0 (highly personalized). No strict mode
-    so integer scores like 1 are coerced to 1.0 without failing validation.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    score: float = Field(
-        ...,
-        ge=0.0,
-        le=1.0,
-        description="Personalization quality from 0.0 (generic) to 1.0 (highly tailored).",
-    )
-    reasoning: str = Field(
-        ...,
-        min_length=1,
-        description="One-sentence rationale explaining the score.",
-    )
-
-
-class FairHousingJudgeLlmOutput(BaseModel):
-    """
-    Exact JSON contract for the Fair Housing LLM judge: only {\"passed\": <boolean>}.
-    """
-
-    model_config = ConfigDict(extra="forbid", strict=True)
-
-    passed: bool = Field(
-        ...,
-        description="True or false from the model — not strings or 1/0.",
-    )
 
 
 class MessageOutput(BaseModel):
@@ -500,6 +344,8 @@ class ExpectedOutput(BaseModel):
     Expected result attached to a JSONL case for eval comparison.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     next_message: MessageOutput | None = Field(
         None,
         description="Expected message output.",
@@ -521,13 +367,13 @@ class TestCase(BaseModel):
         ...,
         description="Stable case identifier.",
     )
-    persona: ShortText = Field(
+    persona: PersonaKind = Field(
         ...,
-        description="Recipient persona.",
+        description="Recipient persona (PoC: prospect only; extend union when new segments launch).",
     )
-    lifecycle_stage: ShortText = Field(
+    lifecycle_stage: LifecycleKind = Field(
         ...,
-        description="Recipient journey stage.",
+        description="Journey stage (PoC: new | open; extend when client adds stages).",
     )
     consent: ConsentRecord = Field(..., description="Channel consent flags.")
     channel_preferences: list[Channel] = Field(
@@ -547,6 +393,46 @@ class RunRequest(TestCase):
     API request model for running one outreach JSONL case.
     """
 
+    @model_validator(mode="after")
+    def enforce_content_language_policy(self) -> Self:
+        """
+        Reject profanity, slurs, and violent-extremism phrases in caller-supplied text.
+
+        Expected-output fixtures are excluded — only inputs and assertion metadata.
+        """
+
+        outreach_input_must_pass_language_policy(self.task_id)
+        outreach_input_must_pass_language_policy(self.persona)
+        outreach_input_must_pass_language_policy(self.lifecycle_stage)
+
+        inp = self.input
+        outreach_input_must_pass_language_policy(inp.property_name)
+        outreach_input_must_pass_language_policy(inp.timezone)
+        outreach_input_must_pass_language_policy(inp.language)
+        if inp.listing_url is not None:
+            outreach_input_must_pass_language_policy(str(inp.listing_url))
+
+        profile = inp.profile
+        outreach_input_must_pass_language_policy(profile.first_name)
+        outreach_input_must_pass_language_policy(profile.city_interest)
+        if profile.amenity_interest:
+            for item in profile.amenity_interest:
+                outreach_input_must_pass_language_policy(item)
+
+        assertions = self.assertions
+        for state in assertions.required_states:
+            outreach_input_must_pass_language_policy(state)
+
+        constraints = assertions.constraints
+        outreach_input_must_pass_language_policy(constraints.primary_cta)
+        outreach_input_must_pass_language_policy(constraints.brand_style_notes)
+        outreach_input_must_pass_language_policy(constraints.compliance_suffix)
+        if constraints.allowed_link_domains:
+            for host in constraints.allowed_link_domains:
+                outreach_input_must_pass_language_policy(host)
+
+        return self
+
 
 class RunResponse(BaseModel):
     """
@@ -554,11 +440,6 @@ class RunResponse(BaseModel):
     """
 
     output: AgentOutput = Field(..., description="Generated agent output.")
-    tools_used: list[ShortText] = Field(
-        default_factory=list,
-        max_length=20,
-        description="Tool or node names used during execution.",
-    )
     latency_ms: int = Field(..., ge=0, description="End-to-end runtime in milliseconds.")
 
 

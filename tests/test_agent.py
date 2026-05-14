@@ -81,7 +81,11 @@ def test_run_agent_returns_no_send_when_no_channel_is_eligible() -> None:
     assert result == {
         "send": False,
         "next_message": None,
-        "next_action": None,
+        "next_action": {
+            "type": "human_in_the_loop",
+            "name": "pipeline_blocked",
+            "value": None,
+        },
         "body": "",
     }
 
@@ -104,17 +108,25 @@ def test_run_agent_returns_email_for_long_horizon_sample() -> None:
 
 def test_run_agent_returns_no_send_when_compliance_fails() -> None:
     """
-    Verify unsafe composed content is blocked before returning send=True.
+    Verify a composed body with a disallowed link domain is blocked before send=True.
+
+    URL domain enforcement only fires when allowed_link_domains is set. This test
+    sets an explicit allowlist that excludes the URL the fixture stub injects.
     """
 
     record = load_sample_record(0)
     record["input"]["property_name"] = "Unsafe https://evil.example"
+    record["assertions"]["constraints"]["allowed_link_domains"] = ["oakridge.example"]
 
     result = _run_agent_with_case_jsonl_fixture(record)
 
     assert result == {
         "send": False,
         "next_message": None,
-        "next_action": None,
+        "next_action": {
+            "type": "human_in_the_loop",
+            "name": "pipeline_blocked",
+            "value": None,
+        },
         "body": "",
     }

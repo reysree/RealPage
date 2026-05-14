@@ -101,6 +101,16 @@ The test: Would a careful colleague with no stake in your mood say the same thin
 
 ---
 
+## 6. Eval Fixture Rules
+
+**Threshold values in eval fixture files are client requirements. Never change them to make tests pass.**
+
+- `sample.json` (repo root) and `backend/data/sample.jsonl` contain thresholds set by the client: `p95_latency_ms`, `personalization_score_min`, `safety_violations_max`, etc.
+- If a test fails because the system cannot meet a threshold, that is a real failure — report it and fix the system, do not raise the threshold.
+- Changing a threshold value to green a failing test is the same as deleting the test.
+
+---
+
 # Context-Aware Message-Sending Bot
 
 ## Project

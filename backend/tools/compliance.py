@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 from pydantic import ValidationError
 
 from backend.constants import FAIR_HOUSING_RULES
-from backend.schemas import FairHousingJudgeLlmOutput
+from backend.schemas_llm import FairHousingJudgeLlmOutput
 
 logger = logging.getLogger(__name__)
 
@@ -78,17 +78,22 @@ PROTECTED_CLASS_TERMS = {
 
 def _has_unapproved_links(body: str, allowed_domains: set[str]) -> bool:
     """
-    Check message URLs against exact normalized allowed host names.
+    Check message URLs against an explicit hostname allowlist.
+
+    Only called when ``allowed_link_domains`` is present in constraints. When the
+    constraint is absent, all URLs are permitted (malformed/unsafe ones are caught
+    upstream by ``check_input_security``).
 
     Args:
         body: Message body to scan.
-        allowed_domains: Lowercase host names allowed in the body.
+        allowed_domains: Lowercase host names that are explicitly allowed.
     Returns:
         True when any URL host is absent from the allowlist.
     """
 
     for match in URL_PATTERN.finditer(body):
-        parsed = urlparse(match.group(0))
+        raw = match.group(0).rstrip(".,;:!?)>\"'")
+        parsed = urlparse(raw)
         hostname = (parsed.hostname or "").lower()
         if not hostname or hostname not in allowed_domains:
             return True
@@ -187,13 +192,11 @@ def check_compliance(body: str, constraints: dict[str, object]) -> str:
         ):
             violations.append("pii_leak")
 
-        allowed_domains = constraints.get("allowed_link_domains")
-        if isinstance(allowed_domains, list):
-            allowed_domain_set = {str(domain).lower() for domain in allowed_domains}
-        else:
-            allowed_domain_set = set()
-        if _has_unapproved_links(body, allowed_domain_set):
-            violations.append("unapproved_link")
+        allowed_raw = constraints.get("allowed_link_domains")
+        if isinstance(allowed_raw, list):
+            allowed_domain_set = {str(domain).lower() for domain in allowed_raw}
+            if _has_unapproved_links(body, allowed_domain_set):
+                violations.append("unapproved_link")
 
         if constraints.get("no_sensitive_discrimination") is True:
             llm_passed = _judge_fair_housing_with_llm(body)

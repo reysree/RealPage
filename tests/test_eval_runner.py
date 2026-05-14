@@ -5,36 +5,101 @@ Author: Sreeram
 """
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
-from backend.eval_runner import load_cases, run_all, run_case, score_output
+from backend.eval_runner import (
+    _percentile_linear,
+    load_cases,
+    run_all,
+    run_case,
+    score_output,
+)
 
 
 SAMPLE_PATH = Path(__file__).parents[1] / "backend" / "data" / "sample.jsonl"
 
 
 @pytest.fixture(autouse=True)
-def _eval_tests_no_openai_env(monkeypatch: pytest.MonkeyPatch) -> None:
+def _eval_runner_ci_safety(monkeypatch: pytest.MonkeyPatch) -> None:
     """
-    Eval runner loads backend/.env at import time; these tests expect deterministic
-    offline scoring without live composer or judge calls.
+    Fast, deterministic eval-runner tests: no live OpenAI, stubbed composer, fixed judge.
+
+    Production ``python -m backend.eval_runner`` does not use this fixture; it uses real
+    APIs when configured. The judge stub here is **test-only** so personalization_pass is
+    stable without billing OpenAI during pytest.
     """
 
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("REALPAGE_EVAL_LATENCY_RUNS", "1")
+    monkeypatch.setenv("REALPAGE_EVAL_STUB_COMPOSE", "true")
+
+    def _deterministic_personalization_score(
+        _body: str,
+        _profile: dict[str, Any],
+        _property_name: str,
+    ) -> float:
+        return 0.92
+
+    monkeypatch.setattr(
+        "backend.eval_runner._score_personalization",
+        _deterministic_personalization_score,
+    )
+
+
+EXPECTED_TASK_IDS = [
+    "prospect_welcome_day0",
+    "prospect_long_horizon_day3",
+]
+EXPECTED_TOTAL_CASES = len(EXPECTED_TASK_IDS)
+
+
+def test_percentile_linear_p95_interpolates() -> None:
+    """
+    Verify P95 linear interpolation between bracketing samples.
+    """
+
+    assert _percentile_linear([10, 20, 30, 40, 50], 95.0) == 48.0
+
+
+def test_run_case_honors_latency_sample_count() -> None:
+    """
+    Verify repeated timed cycles populate latency sample lists.
+    """
+
+    case = load_cases(SAMPLE_PATH)[0]
+    result = run_case(case, latency_sample_count=3)
+
+    assert result["latency"]["samples"] == 3
+    assert len(result["latency"]["agent_elapsed_ms_all"]) == 3
+    assert result["latency"]["sampling_mode"] == "repeated_api_then_single_score"
+    assert "eval_integrity" in result
+
+
+def test_score_output_personalization_fails_when_judge_returns_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    A set personalization_score_min must not pass by omission when the judge cannot run.
+    """
+
+    monkeypatch.setattr("backend.eval_runner._score_personalization", lambda *a, **k: None)
+    case = load_cases(SAMPLE_PATH)[0]
+    result = run_case(case)
+    assert result["scores"].get("personalization_pass") is False
 
 
 def test_load_cases_reads_jsonl_records() -> None:
     """
-    Verify the eval runner loads bundled JSONL cases in order.
+    Verify the eval runner loads all bundled JSONL cases in file order.
     """
 
     cases = load_cases(SAMPLE_PATH)
+    task_ids = [case["task_id"] for case in cases]
 
-    assert [case["task_id"] for case in cases] == [
-        "prospect_welcome_day0",
-        "prospect_long_horizon_day3",
-    ]
+    assert len(cases) == EXPECTED_TOTAL_CASES
+    assert task_ids == EXPECTED_TASK_IDS
 
 
 def test_run_case_scores_generated_output_against_expected() -> None:
@@ -58,8 +123,8 @@ def test_run_all_reports_aggregate_pass_for_bundled_samples() -> None:
 
     result = run_all(SAMPLE_PATH)
 
-    assert result["total"] == 2
-    assert result["passed"] == 2
+    assert result["total"] == EXPECTED_TOTAL_CASES
+    assert result["passed"] == EXPECTED_TOTAL_CASES
     assert result["failed"] == 0
 
 

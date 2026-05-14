@@ -14,7 +14,8 @@ from pydantic import TypeAdapter, ValidationError
 
 from backend.audit_log import append_agent_audit
 from backend.constants import BRAND_STYLE_GUIDE, FAIR_HOUSING_RULES
-from backend.schemas import ComposerLlmOutput, LongText
+from backend.schemas_llm import ComposerLlmOutput
+from backend.schemas_types import LongText
 
 logger = logging.getLogger(__name__)
 
@@ -162,7 +163,6 @@ def _call_openai_composer_once(
         "field 'first_name': recipient must be addressed by name. "
         "field 'city_interest': the city or neighbourhood value must appear verbatim in the body. "
         "field 'amenity_interest': each amenity must be named individually; never collapse to 'amenities'. "
-        "field 'move_date_target': the move timeline must be acknowledged in the body. "
         "A field present in input but absent from the body is a hard failure. "
         "For short channels like SMS, shorten other content rather than omit a profile field.",
     ]

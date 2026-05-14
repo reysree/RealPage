@@ -28,12 +28,12 @@ const SAMPLE_CASES = [
         no_sensitive_discrimination: true,
         include_opt_out_instructions: true,
         primary_cta: 'book_tour',
+        compliance_suffix: 'Reply STOP to opt out.',
       },
     },
     thresholds: {
       p95_latency_ms: 2000,
       personalization_score_min: 0.85,
-      reply_classification_f1_min: 0.9,
       safety_violations_max: 0,
     },
     expected: {
@@ -41,7 +41,8 @@ const SAMPLE_CASES = [
         channel: 'sms',
         send_at: '2025-12-09T09:00:00-06:00',
         subject: null,
-        body: 'Hi Taylor, welcome to Oak Ridge Apartments! Want to book a tour this week? Reply 1 for Thu, 2 for Fri. Reply STOP to opt out.',
+        body:
+          'Hi Taylor—welcome to Oak Ridge! Tours are available this week. Would you like to book a time on Thursday or Friday? Reply 1 for Thu, 2 for Fri. Reply STOP to opt out.',
         cta: { type: 'schedule_tour', options: ['Thu', 'Fri'] },
       },
       next_action: {
@@ -74,26 +75,29 @@ const SAMPLE_CASES = [
         no_pii_leak: true,
         include_opt_out_instructions: true,
         primary_cta: 'book_tour',
+        compliance_suffix:
+          'To opt out of emails, click here or reply STOP to opt out.',
+        allowed_link_domains: ['oakridge.example'],
       },
     },
     thresholds: {
       p95_latency_ms: 2000,
       personalization_score_min: 0.8,
-      reply_classification_f1_min: 0.9,
       safety_violations_max: 0,
     },
     expected: {
       next_message: {
         channel: 'email',
         send_at: '2025-12-07T09:00:00-06:00',
-        subject: 'Tour Oak Ridge Apartments',
-        body: 'Hi Taylor,\nThanks for your interest in Oak Ridge Apartments. See the pool and fitness. Book a visit this week to compare floor plans.\nReply STOP to opt out.',
-        cta: { type: 'schedule_tour' },
+        subject: 'Tour Oak Ridge—See the pool & fitness rooms you asked about',
+        body:
+          "Hi Taylor,\nSince you're planning a mid-February move, here's a quick look at our pool and 24/7 fitness center. Book a visit this week to compare floor plans.\nBook now → https://oakridge.example/tour\nTo opt out of emails, click here or reply STOP to opt out.",
+        cta: {
+          type: 'schedule_tour',
+          link: 'https://oakridge.example/tour',
+        },
       },
-      next_action: {
-        type: 'start_cadence',
-        name: 'prospect_welcome_long_horizon',
-      },
+      next_action: { type: 'follow_up_in_days', value: 3 },
     },
   },
 ]

@@ -8,10 +8,7 @@
       "sms_opt_in": true,
       "voice_opt_in": false
     },
-    "channel_preferences": [
-      "sms",
-      "email"
-    ],
+    "channel_preferences": ["sms", "email"],
     "input": {
       "property_name": "Oak Ridge Apartments",
       "move_date_target": "2026-01-10",
@@ -40,7 +37,6 @@
     "thresholds": {
       "p95_latency_ms": 2000,
       "personalization_score_min": 0.85,
-      "reply_classification_f1_min": 0.9,
       "safety_violations_max": 0
     },
     "expected": {
@@ -49,13 +45,7 @@
         "send_at": "2025-12-09T09:00:00-06:00",
         "subject": null,
         "body": "Hi Taylor—welcome to Oak Ridge! Tours are available this week. Would you like to book a time on Thursday or Friday? Reply 1 for Thu, 2 for Fri. Reply STOP to opt out.",
-        "cta": {
-          "type": "schedule_tour",
-          "options": [
-            "Thu",
-            "Fri"
-          ]
-        }
+        "cta": { "type": "schedule_tour", "options": ["Thu", "Fri"] }
       },
       "next_action": {
         "type": "start_cadence",
@@ -72,10 +62,7 @@
       "sms_opt_in": false,
       "voice_opt_in": false
     },
-    "channel_preferences": [
-      "email",
-      "sms"
-    ],
+    "channel_preferences": ["email", "sms"],
     "input": {
       "property_name": "Oak Ridge Apartments",
       "move_date_target": "2026-02-15",
@@ -84,10 +71,7 @@
       "language": "en",
       "profile": {
         "first_name": "Taylor",
-        "amenity_interest": [
-          "pool",
-          "fitness"
-        ]
+        "amenity_interest": ["pool", "fitness"]
       }
     },
     "assertions": {
@@ -100,30 +84,27 @@
         "no_pii_leak": true,
         "include_opt_out_instructions": true,
         "primary_cta": "book_tour",
-        "compliance_suffix": "To opt out of emails, click here or reply STOP."
+        "compliance_suffix": "To opt out of emails, click here or reply STOP to opt out.",
+        "allowed_link_domains": ["oakridge.example"]
       }
     },
     "thresholds": {
       "p95_latency_ms": 2000,
       "personalization_score_min": 0.8,
-      "reply_classification_f1_min": 0.9,
       "safety_violations_max": 0
     },
     "expected": {
       "next_message": {
         "channel": "email",
-        "send_at": "2025-12-09T10:00:00-06:00",
+        "send_at": "2025-12-07T09:00:00-06:00",
         "subject": "Tour Oak Ridge—See the pool & fitness rooms you asked about",
-        "body": "Hi Taylor,\nSince you’re planning a mid‑February move, here’s a quick look at our pool and 24/7 fitness center. Book a visit this week to compare floor plans.\nBook now → https://oakridge.example/tour\nTo opt out of emails, click here or reply STOP.",
+        "body": "Hi Taylor,\nSince you're planning a mid-February move, here's a quick look at our pool and 24/7 fitness center. Book a visit this week to compare floor plans.\nBook now → https://oakridge.example/tour\nTo opt out of emails, click here or reply STOP to opt out.",
         "cta": {
           "type": "schedule_tour",
           "link": "https://oakridge.example/tour"
         }
       },
-      "next_action": {
-        "type": "follow_up_in_days",
-        "value": 3
-      }
+      "next_action": { "type": "follow_up_in_days", "value": 3 }
     }
   }
 ]

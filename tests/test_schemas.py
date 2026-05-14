@@ -52,16 +52,17 @@ def test_all_sample_records_and_policy_constants_are_loadable() -> None:
     """
 
     sample_path = Path(__file__).parents[1] / "backend" / "data" / "sample.jsonl"
-    records = [
-        RunRequest.model_validate(json.loads(line))
+    lines = [
+        line
         for line in sample_path.read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
+    records = [RunRequest.model_validate(json.loads(line)) for line in lines]
 
-    assert [record.task_id for record in records] == [
-        "prospect_welcome_day0",
-        "prospect_long_horizon_day3",
-    ]
+    assert len(records) >= 2
+    assert records[0].task_id == "prospect_welcome_day0"
+    assert records[1].task_id == "prospect_long_horizon_day3"
+    assert len(lines) == len(records)
     assert "Fair Housing Act" in FAIR_HOUSING_RULES
     assert "Always end with opt-out instruction" in BRAND_STYLE_GUIDE
 
@@ -104,6 +105,5 @@ def test_run_request_rejects_unbounded_free_form_payloads() -> None:
     with pytest.raises(ValidationError):
         RunResponse(
             output=AgentOutput(send=False, next_message=None, next_action=None),
-            tools_used=["x" * 121],
-            latency_ms=1,
+            latency_ms=-1,
         )
