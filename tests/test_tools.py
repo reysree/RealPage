@@ -4,14 +4,13 @@ Purpose: Behavior tests for outreach decision tools.
 Author: Sreeram
 """
 
-import json
-
 from unittest.mock import patch
 
 import pytest
 from pydantic import ValidationError
 
-from backend.schemas_llm import ComposerLlmOutput, FairHousingJudgeLlmOutput
+from backend.schemas import ToolResultEnvelope
+from backend.schemas import ComposerLlmOutput, FairHousingJudgeLlmOutput
 from backend.tools import ALL_TOOLS
 from backend.tools.channel_selector import select_channel
 from backend.tools.compliance import check_compliance
@@ -21,17 +20,17 @@ from backend.tools.message_composer import compose_message
 from backend.tools.timing import determine_send_time
 
 
-def parse_tool_result(result: str) -> dict:
+def parse_tool_result(result: ToolResultEnvelope) -> dict:
     """
-    Parse a structured JSON tool result for behavior assertions.
+    Dump a structured tool envelope for behavior assertions.
 
     Args:
-        result: JSON string returned by a tool.
+        result: Envelope returned by an in-process tool.
     Returns:
-        Parsed tool result dictionary.
+        Tool result dictionary shaped like the prior JSON tool contract.
     """
 
-    return json.loads(result)
+    return result.model_dump(mode="python")
 
 
 def test_consent_and_channel_selection_follow_preference_order() -> None:

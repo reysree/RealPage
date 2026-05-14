@@ -1,5 +1,5 @@
 """
-File: schemas_types.py
+File: types.py
 Purpose: Wire validators and annotated primitive types shared across outreach schema modules.
 Author: Sreeram
 """

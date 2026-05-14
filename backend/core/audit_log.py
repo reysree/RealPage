@@ -12,7 +12,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_REPO_ROOT = Path(__file__).resolve().parents[1]
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 _AUDIT_PATH = _REPO_ROOT / "logs" / "agent_audit.ndjson"
 
 
@@ -54,4 +54,3 @@ def append_agent_audit(
             handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
     except OSError as exc:
         logger.warning("[audit_log] failed to append ndjson path=%s err=%s", _AUDIT_PATH, exc)
-

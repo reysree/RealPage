@@ -202,14 +202,19 @@ If yes: redesign.
 
 ### Rule 3: Structured Return
 
-Every tool returns a JSON string. Never return plain text.
-The agent synthesizes the presentation layer. The tool returns the data.
+Tools return **structured data**, not presentation prose. The agent builds the user-facing layer.
+
+- **In-process helpers (RealPage orchestration):** return `ToolResultEnvelope` with a dict `result` and optional `error` / `error_code` — no `json.dumps` between callers in the same Python process.
+- **SDK-exposed `@function_tool` targets:** the decorated function returns **`str`**. Serialize envelopes with `ToolResultEnvelope(...).model_dump_json(exclude_none=True)` (or equivalent).
 
 ```python
-# Good
-return json.dumps({"result": value, "units": "USD"})
+# Structured (in-process)
+return ToolResultEnvelope(error=None, result={"value": value, "units": "USD"})
 
-# Bad
+# SDK boundary
+return ToolResultEnvelope(error=None, result={...}).model_dump_json(exclude_none=True)
+
+# Bad — prose substitutes for data
 return f"The result is {value} dollars"
 ```
 

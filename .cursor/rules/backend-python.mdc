@@ -9,6 +9,6 @@ alwaysApply: false
 - Every Python file needs the standard file header with purpose and author `Sreeram`.
 - Every class and function needs a docstring explaining what it represents or does and why it exists.
 - Every `@function_tool` docstring must include `TOOL`, `Purpose`, `When called`, `Returns`, and `Note: Atomic`.
-- Tool inputs and outputs must be typed; tool returns should be structured JSON strings.
+- Tool inputs and outputs must be typed; in-process tools return ``ToolResultEnvelope`` (see ``backend/schemas.py``); serialize with ``model_dump()`` only at HTTP or persistence boundaries.
 - Wrap tool logic in logging and structured error handling that returns `{"error": ..., "result": null}` on failure.
 - Use settings or environment variables for configuration; do not hardcode deployment values.

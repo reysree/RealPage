@@ -4,12 +4,11 @@ Purpose: Outreach agent orchestration over validated case inputs and tools.
 Author: Sreeram
 """
 
-import json
 import logging
 from typing import Any
 
-from backend.audit_log import append_agent_audit
-from backend.schemas import AgentOutput, MessageOutput, NextAction, RunRequest
+from backend.core.audit_log import append_agent_audit
+from backend.schemas import AgentOutput, MessageOutput, NextAction, RunRequest, ToolResultEnvelope
 from backend.tools.channel_selector import select_channel
 from backend.tools.compliance import check_compliance
 from backend.tools.consent import check_consent
@@ -20,23 +19,51 @@ from backend.tools.timing import determine_send_time
 logger = logging.getLogger(__name__)
 
 
-def _parse_tool_result(raw_result: str, tool_name: str) -> dict[str, Any]:
+def _unwrap_tool_result(envelope: ToolResultEnvelope, tool_name: str) -> dict[str, Any]:
     """
-    Parse one tool response and raise when the tool reported an error.
+    Normalize one tool envelope and raise when the tool reported an execution error.
 
     Args:
-        raw_result: JSON string returned by a tool.
-        tool_name: Name of the tool for error context.
+        envelope: Structured response from an in-process tool.
+        tool_name: Tool name for error context.
     Returns:
-        Parsed `result` payload from the tool response.
+        The tool's ``result`` payload dict.
     """
 
-    parsed = json.loads(raw_result)
-    if parsed.get("error"):
-        raise ValueError(f"{tool_name} failed: {parsed['error']}")
-    result = parsed.get("result")
+    err = envelope.error
+    if err:
+        raise ValueError(f"{tool_name} failed: {err}")
+    result = envelope.result
     if not isinstance(result, dict):
         raise ValueError(f"{tool_name} returned no result payload")
+    return result
+
+
+def _unwrap_compose_tool(envelope: ToolResultEnvelope) -> dict[str, Any] | None:
+    """
+    Extract compose_message result dict, or None when composition failed.
+
+    Failures are logged and audited internally. The caller returns _empty_output() when
+    None is returned — no error details propagate to the API response.
+
+    Args:
+        envelope: compose_message return value.
+    Returns:
+        Result payload dict, or None when the composer reported an error.
+    """
+
+    err = envelope.error
+    result = envelope.result
+    if err or not isinstance(result, dict):
+        code = str(envelope.error_code or "COMPOSER_FAILED")
+        append_agent_audit(
+            component="run_agent",
+            error_code=code,
+            message=str(err or "composer returned no result payload"),
+            detail={},
+        )
+        logger.warning("[run_agent] composer_failed code=%s", code)
+        return None
     return result
 
 
@@ -119,35 +146,6 @@ def _empty_output() -> dict[str, Any]:
     )
 
 
-def _parse_compose_tool(raw_tool_json: str) -> dict[str, Any] | None:
-    """
-    Parse compose_message envelope and return the result payload, or None on failure.
-
-    Failures are logged and audited internally. The caller returns _empty_output() when
-    None is returned — no error details propagate to the API response.
-
-    Args:
-        raw_tool_json: compose_message JSON return string.
-    Returns:
-        Result payload dict, or None when the composer reported an error.
-    """
-
-    parsed = json.loads(raw_tool_json)
-    err = parsed.get("error")
-    result = parsed.get("result")
-    if err or not isinstance(result, dict):
-        code = str(parsed.get("error_code") or "COMPOSER_FAILED")
-        append_agent_audit(
-            component="run_agent",
-            error_code=code,
-            message=str(err or "composer returned no result payload"),
-            detail={},
-        )
-        logger.warning("[run_agent] composer_failed code=%s", code)
-        return None
-    return result
-
-
 def _extract_text_fields(request: RunRequest) -> dict[str, str]:
     """
     Collect all free-text fields from a validated request for security screening.
@@ -193,7 +191,7 @@ def run_agent(case_input: dict[str, Any]) -> dict[str, Any]:
     request = RunRequest.model_validate(case_input)
     constraints = request.assertions.constraints.model_dump(exclude_none=True)
 
-    security_result = _parse_tool_result(
+    security_result = _unwrap_tool_result(
         check_input_security(_extract_text_fields(request)),
         "check_input_security",
     )
@@ -205,7 +203,7 @@ def run_agent(case_input: dict[str, Any]) -> dict[str, Any]:
         )
         return _empty_output()
 
-    channel_result = _parse_tool_result(
+    channel_result = _unwrap_tool_result(
         select_channel(request.channel_preferences, request.consent.model_dump()),
         "select_channel",
     )
@@ -213,14 +211,14 @@ def run_agent(case_input: dict[str, Any]) -> dict[str, Any]:
         return _empty_output()
 
     selected_channel = str(channel_result["selected_channel"])
-    consent_for_channel = _parse_tool_result(
+    consent_for_channel = _unwrap_tool_result(
         check_consent(selected_channel, request.consent.model_dump()),
         "check_consent",
     )
     if consent_for_channel.get("eligible") is not True:
         return _empty_output()
 
-    timing_result = _parse_tool_result(
+    timing_result = _unwrap_tool_result(
         determine_send_time(
             request.input.timezone,
             request.input.last_interaction.isoformat(),
@@ -228,7 +226,7 @@ def run_agent(case_input: dict[str, Any]) -> dict[str, Any]:
         ),
         "determine_send_time",
     )
-    raw_compose = compose_message(
+    compose_envelope = compose_message(
         channel=selected_channel,
         persona=request.persona,
         lifecycle_stage=request.lifecycle_stage,
@@ -242,10 +240,10 @@ def run_agent(case_input: dict[str, Any]) -> dict[str, Any]:
             "reason": consent_for_channel.get("reason"),
         },
     )
-    composer_result = _parse_compose_tool(raw_compose)
+    composer_result = _unwrap_compose_tool(compose_envelope)
     if composer_result is None:
         return _empty_output()
-    compliance_result = _parse_tool_result(
+    compliance_result = _unwrap_tool_result(
         check_compliance(str(composer_result["body"]), constraints),
         "check_compliance",
     )

@@ -4,13 +4,13 @@ Purpose: Regex-based security screening of all input text fields before pipeline
 Author: Sreeram
 """
 
-import json
 import logging
 import re
 from typing import NamedTuple
 
-from backend.content_policy import analyze_inappropriate_content
-from backend.url_security import analyze_url_security, extract_http_urls_from_text
+from backend.core.content_policy import analyze_inappropriate_content
+from backend.core.url_security import analyze_url_security, extract_http_urls_from_text
+from backend.schemas import ToolResultEnvelope
 
 logger = logging.getLogger(__name__)
 
@@ -126,19 +126,19 @@ _ALL_GROUPS: list[_PatternGroup] = [
 _RISK_ORDER = {"low": 0, "medium": 1, "high": 2}
 
 
-def check_input_security(text_fields: dict[str, str]) -> str:
+def check_input_security(text_fields: dict[str, str]) -> ToolResultEnvelope:
     """
     TOOL: check_input_security
     Purpose: Screen all free-text input fields for prompt injection, malicious code,
         social engineering, sensitive-data patterns, and prohibited language.
     When called: First step in run_agent(), before channel selection or message composition.
-    Returns: {"error": null, "result": {"passed": bool, "risk_level": str, "flags": list[str], "blocked_fields": list[str]}}
+    Returns: ToolResultEnvelope with passed, risk_level, flags, blocked_fields in result dict.
     Note: Atomic — regex screening only; zero network calls, no API key required.
 
     Args:
         text_fields: Flat dict of field_name to string value for all free-text input fields.
     Returns:
-        JSON string with pass/fail status, risk level, flags, and blocked field names.
+        Envelope with screening outcome for orchestration callers.
     """
 
     try:
@@ -202,25 +202,25 @@ def check_input_security(text_fields: dict[str, str]) -> str:
             flags,
         )
 
-        return json.dumps({
-            "error": None,
-            "result": {
+        return ToolResultEnvelope(
+            error=None,
+            result={
                 "passed": passed,
                 "risk_level": max_risk,
                 "flags": flags,
                 "blocked_fields": blocked_fields,
             },
-        })
+        )
 
     except Exception as exc:
         # Fail open: regex failure must not crash the request.
         logger.warning("[check_input_security] screen_error=%s", exc, exc_info=True)
-        return json.dumps({
-            "error": None,
-            "result": {
+        return ToolResultEnvelope(
+            error=None,
+            result={
                 "passed": True,
                 "risk_level": "low",
                 "flags": ["SECURITY_CHECK_ERROR: screen failed — failing open; see logs"],
                 "blocked_fields": [],
             },
-        })
+        )

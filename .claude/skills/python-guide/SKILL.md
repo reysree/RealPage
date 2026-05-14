@@ -170,19 +170,43 @@ async def chat(request: ChatRequest):
 
 ### In Tools — Always Return, Never Raise
 
-Tools return structured JSON regardless of success or failure.
-The agent receives the error JSON and responds accordingly.
-Never let an unhandled exception propagate out of a tool.
+Tools return structured results regardless of success or failure.
+Orchestration code or the Agents SDK unwraps outcomes; never bubble raw failures as uncaught exceptions from a tool.
+
+**RealPage Lumina (plain Python orchestration)**
+
+Return `ToolResultEnvelope` (`backend.schemas`): `error`, optional `error_code`, and dict `result`. Callers use helpers such as `_unwrap_tool_result`; do **not** `json.dumps` / `json.loads` between in-process helpers.
+
+```python
+from backend.schemas import ToolResultEnvelope
+
+def check_example(flag: bool) -> ToolResultEnvelope:
+    try:
+        return ToolResultEnvelope(error=None, result={"eligible": flag})
+    except Exception as exc:
+        logger.error("[check_example] error=%s", exc, exc_info=True)
+        return ToolResultEnvelope(error=str(exc), result=None)
+```
+
+**OpenAI `@function_tool` (SDK boundary)**
+
+The decorated function **must return `str`**. Build a typed envelope internally, then serialize at this edge (`model_dump_json()` or equivalent).
 
 ```python
 @function_tool
 def search_knowledge_base(query: str) -> str:
     try:
         results = _collection.query(query_texts=[query], n_results=3)
-        return json.dumps({"results": results})
-    except Exception as e:
-        logger.error(f"[search_knowledge_base] error={e}", exc_info=True)
-        return json.dumps({"error": str(e), "results": []})
+        return ToolResultEnvelope(
+            error=None,
+            result={"results": results},
+        ).model_dump_json(exclude_none=True)
+    except Exception as exc:
+        logger.error(f"[search_knowledge_base] error={exc}", exc_info=True)
+        return ToolResultEnvelope(
+            error=str(exc),
+            result={"results": []},
+        ).model_dump_json(exclude_none=True)
 ```
 
 ### In FastAPI Routes — Raise HTTPException
@@ -280,26 +304,38 @@ conn.execute("SELECT * FROM messages WHERE session_id = ?", (session_id,))
 
 ---
 
-## json Module
+## Structured tool returns vs JSON serialization
 
-Every tool returns a JSON string. Use `json.dumps()` — never return raw objects.
+**In-process helpers (LangGraph FastAPI adapters, synchronous orchestration)**
+
+Return **`ToolResultEnvelope` or another Pydantic model** appropriate to the boundary. Avoid `json.dumps` only to pass data to the next line of Python code.
 
 ```python
-import json
+# Good — downstream code receives a typed object
+return ToolResultEnvelope(error=None, result={"results": formatted, "count": len(formatted)})
 
-# Good
-return json.dumps({"results": formatted, "count": len(formatted)})
-
-# Bad — returns a Python dict, not a string
-return {"results": formatted}
+# Bad — serialize/parse inside the same process for no boundary reason
+return json.dumps({"results": formatted})
+parsed = json.loads(other_layer(...))
 ```
 
-Parse incoming JSON strings with try/except:
+**SDK-exposed `@function_tool`**
+
+Return type annotation is **`str`**. Produce JSON text at the decorator boundary from an envelope:
+
+```python
+return ToolResultEnvelope(error=None, result=payload).model_dump_json(exclude_none=True)
+```
+
+**External payloads only**
+
+Reserve `json.loads` / manual `json.dumps` for HTTP bodies, files, LLM `message.content`, and storage — not for handoffs between cooperating Python functions in RealPage Lumina core.
+
 ```python
 try:
-    data = json.loads(values)
-except json.JSONDecodeError as e:
-    return json.dumps({"error": f"Invalid JSON: {e}"})
+    data = json.loads(incoming_blob)
+except json.JSONDecodeError as exc:
+    return ToolResultEnvelope(error=f"Invalid JSON: {exc}", result=None)
 ```
 
 ---

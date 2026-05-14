@@ -1,13 +1,12 @@
 """
-File: compose_fixture_stub.py
+File: fixture_stub.py
 Purpose: Offline compose_payload stubs backed by bundled JSONL expected output.
 Author: Sreeram
 """
 
-from __future__ import annotations
-
-import json
 from typing import Any
+
+from backend.schemas import ToolResultEnvelope
 
 
 def compose_message_payload_for_case(case: dict[str, Any]) -> dict[str, object]:
@@ -54,23 +53,29 @@ def compose_message_payload_for_case(case: dict[str, Any]) -> dict[str, object]:
     }
 
 
-def compose_message_json_for_case(case: dict[str, Any]) -> str:
+def compose_message_envelope_for_case(case: dict[str, Any]) -> ToolResultEnvelope:
     """
-    JSON tool string for compose_message when OpenAI calls are patched out.
+    Tool envelope for compose_message when OpenAI calls are patched out during eval/tests.
 
     Args:
         case: Validated outreach case shaped like backend JSONL samples.
     Returns:
-        Tool JSON envelope with error None and fixture-backed result payload.
+        Envelope with fixture-backed composer result or an eval-gap error code.
     """
 
     payload = compose_message_payload_for_case(case)
     if not payload:
-        return json.dumps(
-            {
-                "error": "Eval fixture lacked expected.next_message.",
-                "error_code": "COMPOSER_EVAL_FIXTURE_GAP",
-                "result": None,
-            }
+        return ToolResultEnvelope(
+            error="Eval fixture lacked expected.next_message.",
+            error_code="COMPOSER_EVAL_FIXTURE_GAP",
+            result=None,
         )
-    return json.dumps({"error": None, "error_code": None, "result": payload})
+    return ToolResultEnvelope(error=None, error_code=None, result=dict(payload))
+
+
+def compose_message_json_for_case(case: dict[str, Any]) -> ToolResultEnvelope:
+    """
+    Back-compat alias for :func:`compose_message_envelope_for_case`.
+    """
+
+    return compose_message_envelope_for_case(case)

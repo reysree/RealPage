@@ -278,20 +278,23 @@ is the primary writer for. Every node must append to `audit_trail` before return
 
 ### Boundary rules
 - FastAPI routes: input and output are Pydantic models — no raw dicts
-- Tools: all inputs/outputs typed — no untyped returns
+- Tools: all inputs typed; in-process tools return `ToolResultEnvelope` (or serialize it with `model_dump_json()` at an `@function_tool` boundary) — no untyped returns
 - Config: no hardcoded strings — use settings object or env vars
 - DB access: agent never accesses DB directly — only through tools
 
 ### Error handling — every tool
 ```python
+from backend.schemas import ToolResultEnvelope
+
 try:
-    result = do_the_thing()
+    outcome = do_the_thing()
     logger.info(f"[{tool_name}] session={session_id} input={input!r}")
-    return json.dumps({"result": result})
-except Exception as e:
-    logger.error(f"[{tool_name}] session={session_id} error={e}", exc_info=True)
-    return json.dumps({"error": str(e), "result": None})
+    return ToolResultEnvelope(error=None, result={"value": outcome})
+except Exception as exc:
+    logger.error(f"[{tool_name}] session={session_id} error={exc}", exc_info=True)
+    return ToolResultEnvelope(error=str(exc), result=None)
 ```
+`@function_tool` wrappers return `...model_dump_json(exclude_none=True)` at the SDK edge.
 
 ---
 

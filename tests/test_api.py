@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from backend.compose_fixture_stub import compose_message_json_for_case
+from backend.evals.fixture_stub import compose_message_json_for_case
 from backend.main import app
 
 

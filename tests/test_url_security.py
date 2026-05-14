@@ -4,7 +4,7 @@ Purpose: Unit tests for URL and hostname safety helpers.
 Author: Sreeram
 """
 
-from backend.url_security import (
+from backend.core.url_security import (
     analyze_plain_hostname,
     analyze_url_security,
     extract_http_urls_from_text,

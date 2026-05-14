@@ -1,5 +1,5 @@
 """
-File: schemas_llm.py
+File: llm.py
 Purpose: Pydantic models for LLM JSON output contracts used by tools and the eval judge.
 Author: Sreeram
 """
@@ -8,7 +8,7 @@ from typing import Self
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
-from backend.schemas_types import ComposerReasonText, LongText, MediumText, ShortText
+from backend.schemas.types import ComposerReasonText, LongText, MediumText, ShortText
 
 
 class ComposerCtaLlmOutput(BaseModel):

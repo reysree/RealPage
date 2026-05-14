@@ -12,8 +12,8 @@ from urllib.parse import urlparse
 
 from pydantic import ValidationError
 
-from backend.constants import FAIR_HOUSING_RULES
-from backend.schemas_llm import FairHousingJudgeLlmOutput
+from backend.core.constants import FAIR_HOUSING_RULES
+from backend.schemas import FairHousingJudgeLlmOutput, ToolResultEnvelope
 
 logger = logging.getLogger(__name__)
 
@@ -150,19 +150,19 @@ def _judge_fair_housing_with_llm(body: str) -> bool | None:
         return None
 
 
-def check_compliance(body: str, constraints: dict[str, object]) -> str:
+def check_compliance(body: str, constraints: dict[str, object]) -> ToolResultEnvelope:
     """
     TOOL: check_compliance
     Purpose: Validate outbound message text against safety and opt-out constraints.
     When called: After message composition and before a message is returned for sending.
-    Returns: {"error": str | null, "result": {"passed": bool, "violations": list[str], "required_additions": list[str]}}
+    Returns: ToolResultEnvelope with pass/fail, violations list, required additions list.
     Note: Atomic — checks compliance only; it does not rewrite messages or choose channels.
 
     Args:
         body: Message body to validate.
         constraints: Compliance constraints from the eval case.
     Returns:
-        JSON string with pass/fail status, violations, and required additions.
+        Envelope with pass/fail status, violations, and required additions.
     """
 
     try:
@@ -206,16 +206,14 @@ def check_compliance(body: str, constraints: dict[str, object]) -> str:
             if matched_terms or llm_passed is False:
                 violations.append("protected_class_language")
 
-        return json.dumps(
-            {
-                "error": None,
-                "result": {
-                    "passed": not violations,
-                    "violations": violations,
-                    "required_additions": required_additions,
-                },
-            }
+        return ToolResultEnvelope(
+            error=None,
+            result={
+                "passed": not violations,
+                "violations": violations,
+                "required_additions": required_additions,
+            },
         )
     except Exception as exc:
         logger.error("[check_compliance] error=%s", exc, exc_info=True)
-        return json.dumps({"error": str(exc), "result": None})
+        return ToolResultEnvelope(error=str(exc), result=None)

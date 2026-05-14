@@ -4,10 +4,11 @@ Purpose: Tool for scheduling outreach at the next local morning send window.
 Author: Sreeram
 """
 
-import json
 import logging
 from datetime import UTC, datetime, time, timedelta
 from zoneinfo import ZoneInfo
+
+from backend.schemas import ToolResultEnvelope
 
 logger = logging.getLogger(__name__)
 
@@ -16,12 +17,12 @@ def determine_send_time(
     timezone: str,
     last_interaction: str,
     lifecycle_stage: str,
-) -> str:
+) -> ToolResultEnvelope:
     """
     TOOL: determine_send_time
     Purpose: Compute the next-day 9:00 AM local send timestamp.
     When called: After a sendable channel is selected and before returning a message.
-    Returns: {"error": str | null, "result": {"send_at": str, "rationale": str}}
+    Returns: ToolResultEnvelope with send_at ISO string or error populated.
     Note: Atomic — computes timing only; it does not select channels or compose messages.
 
     Args:
@@ -29,7 +30,7 @@ def determine_send_time(
         last_interaction: Last interaction timestamp in ISO 8601 format.
         lifecycle_stage: Recipient lifecycle stage, included for audit rationale.
     Returns:
-        JSON string with ISO 8601 send timestamp and rationale.
+        Envelope with ISO 8601 send timestamp and rationale.
     """
 
     try:
@@ -47,15 +48,13 @@ def determine_send_time(
             time(hour=9),
             tzinfo=recipient_zone,
         )
-        return json.dumps(
-            {
-                "error": None,
-                "result": {
-                    "send_at": send_at.isoformat(),
-                    "rationale": "Scheduled for 9:00 AM recipient local time the day after last interaction.",
-                },
-            }
+        return ToolResultEnvelope(
+            error=None,
+            result={
+                "send_at": send_at.isoformat(),
+                "rationale": "Scheduled for 9:00 AM recipient local time the day after last interaction.",
+            },
         )
     except Exception as exc:
         logger.error("[determine_send_time] error=%s", exc, exc_info=True)
-        return json.dumps({"error": str(exc), "result": None})
+        return ToolResultEnvelope(error=str(exc), result=None)

@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from backend.constants import BRAND_STYLE_GUIDE, FAIR_HOUSING_RULES
+from backend.core.constants import BRAND_STYLE_GUIDE, FAIR_HOUSING_RULES
 from backend.schemas import AgentOutput, MessageOutput, RunRequest, RunResponse
 
 

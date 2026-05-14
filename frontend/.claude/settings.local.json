@@ -25,7 +25,14 @@
       "PowerShell($py = \"C:\\\\reysree\\\\realpage\\\\backend\\\\.venv-evals\\\\Scripts\\\\python.exe\"; & $py -m py_compile \"C:\\\\reysree\\\\realpage\\\\backend\\\\tools\\\\compliance.py\" \"C:\\\\reysree\\\\realpage\\\\backend\\\\content_policy.py\" \"C:\\\\reysree\\\\realpage\\\\backend\\\\schemas.py\" 2>&1; Write-Output \"syntax_ok\")",
       "PowerShell(Set-Location \"C:\\\\reysree\\\\realpage\"; $py = \"C:\\\\reysree\\\\realpage\\\\backend\\\\.venv-evals\\\\Scripts\\\\python.exe\"; & $py -c \"from backend.tools.compliance import check_compliance, OPT_OUT_PATTERN; print\\('compliance ok'\\)\"; & $py -c \"from backend.content_policy import analyze_inappropriate_content, outreach_input_must_pass_language_policy; print\\('content_policy ok'\\)\"; & $py -c \"from backend.schemas import RunResponse, AgentOutput, RunRequest; print\\('schemas ok'\\)\" 2>&1)",
       "PowerShell(Get-Content *)",
-      "PowerShell(Set-Location \"C:\\\\reysree\\\\realpage\"; $py = \"C:\\\\reysree\\\\realpage\\\\backend\\\\.venv-evals\\\\Scripts\\\\python.exe\"; & $py -m backend.eval_runner --latency-runs 3 2>&1)"
+      "PowerShell(Set-Location \"C:\\\\reysree\\\\realpage\"; $py = \"C:\\\\reysree\\\\realpage\\\\backend\\\\.venv-evals\\\\Scripts\\\\python.exe\"; & $py -m backend.eval_runner --latency-runs 3 2>&1)",
+      "PowerShell($py = \"C:\\\\reysree\\\\realpage\\\\backend\\\\.venv-evals\\\\Scripts\\\\python.exe\"; & $py -m pytest \"C:\\\\reysree\\\\realpage\\\\tests\" -q --ignore=\"C:\\\\reysree\\\\realpage\\\\tests\\\\test_input_security_llm_eval.py\" 2>&1)",
+      "PowerShell($py = \"C:\\\\reysree\\\\realpage\\\\backend\\\\.venv-evals\\\\Scripts\\\\python.exe\"; & $py -m pytest \"C:\\\\reysree\\\\realpage\\\\tests\\\\test_input_security_llm_eval.py\" -v -s 2>&1)",
+      "PowerShell($py = \"C:\\\\reysree\\\\realpage\\\\backend\\\\.venv-evals\\\\Scripts\\\\python.exe\"; & $py -m backend.eval_runner --latency-runs 3 2>&1)",
+      "Bash(Get-ChildItem C:\\\\reysree\\\\realpage\\\\backend -Name \"*.py\")",
+      "Bash(Sort-Object)",
+      "PowerShell(Get-ChildItem C:\\\\reysree\\\\realpage\\\\backend -Directory | Where-Object { $_.Name -notmatch '^\\\\.' -and $_.Name -ne '.venv' -and $_.Name -ne '.venv-evals' } | Select-Object Name)",
+      "PowerShell(Move-Item *)"
     ]
   }
 }

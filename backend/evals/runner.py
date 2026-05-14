@@ -1,5 +1,5 @@
 """
-File: eval_runner.py
+File: runner.py
 Purpose: JSONL eval runner with explicit integrity metadata (stub vs live compose, latency semantics).
 Author: Sreeram
 """
@@ -27,7 +27,7 @@ def _load_dotenv() -> None:
     Does not override variables already set in the environment.
     """
 
-    env_path = Path(__file__).parent / ".env"
+    env_path = Path(__file__).parents[1] / ".env"
     if not env_path.exists():
         return
     try:
@@ -65,10 +65,15 @@ Do not award or deduct points for tone, style, channel format, or message length
 Return JSON only: {"score": <number 0.0 to 1.0>, "reasoning": "<one sentence>"}
 """
 
-DEFAULT_SAMPLE_PATH = Path(__file__).parent / "data" / "sample.jsonl"
-EVAL_DATA_DIR = Path(__file__).parent / "data"
+DEFAULT_SAMPLE_PATH = Path(__file__).parents[1] / "data" / "sample.jsonl"
+EVAL_DATA_DIR = Path(__file__).parents[1] / "data"
 MAX_EVAL_FILE_BYTES = 1_000_000
 DEFAULT_CLI_LATENCY_RUNS = 20
+
+# Exact-match scores are only meaningful when the fixture stub returns the golden body.
+# With live compose the LLM produces real but non-deterministic text, so these are
+# informational only and must not gate `passed`.
+_STUB_ONLY_SCORES: frozenset[str] = frozenset({"body_match", "subject_match", "cta_match"})
 
 
 def _percentile_linear(samples: list[int], pct: float) -> float:
@@ -121,9 +126,9 @@ def _resolve_eval_stub_compose() -> bool:
     """
     Whether to patch ``compose_message`` to fixture-backed JSON during eval.
 
-    Default **true** so structural checks match golden JSONL bodies. Set
-    ``REALPAGE_EVAL_STUB_COMPOSE=false`` only when running a live-composer eval where
-    pass criteria (e.g. semantic scoring) accept divergent model text.
+    Default **false** — evals use real OpenAI composition to simulate production.
+    Set ``REALPAGE_EVAL_STUB_COMPOSE=true`` only in offline CI where exact body_match
+    is required and live API calls are not available (e.g. unit test fixtures).
 
     Returns:
         True when the harness should stub the composer inside ``/run``.
@@ -132,7 +137,7 @@ def _resolve_eval_stub_compose() -> bool:
     raw = os.getenv("REALPAGE_EVAL_STUB_COMPOSE")
     if raw is not None:
         return raw.lower() in ("1", "true", "yes")
-    return True
+    return False
 
 
 def _validate_case_path(path: str | Path) -> Path:
@@ -202,7 +207,7 @@ def _compose_for_personalization(case: dict[str, Any]) -> str:
         case_input = case.get("input") or {}
         constraints = ((case.get("assertions") or {}).get("constraints")) or {}
 
-        raw = compose_message(
+        compose_env = compose_message(
             channel=channel,
             persona=str(case.get("persona") or ""),
             lifecycle_stage=str(case.get("lifecycle_stage") or ""),
@@ -211,8 +216,8 @@ def _compose_for_personalization(case: dict[str, Any]) -> str:
             primary_cta=str(constraints.get("primary_cta") or "book_tour"),
             constraints=constraints,
         )
-        parsed = json.loads(raw)
-        return str((parsed.get("result") or {}).get("body") or "")
+        result = compose_env.result if compose_env.error is None else None
+        return str((result or {}).get("body") or "")
     except Exception as exc:
         logger.warning("[compose_for_personalization] unavailable: %s", exc)
         return ""
@@ -241,7 +246,7 @@ def _score_personalization(
     try:
         from openai import OpenAI
 
-        from backend.schemas_llm import PersonalizationJudgeLlmOutput
+        from backend.schemas import PersonalizationJudgeLlmOutput
 
         client = OpenAI()
         response = client.chat.completions.create(
@@ -313,7 +318,7 @@ def _run_case_via_api(case: dict[str, Any]) -> dict[str, Any]:
     if stub:
         from unittest.mock import patch
 
-        from backend.compose_fixture_stub import compose_message_json_for_case
+        from backend.evals.fixture_stub import compose_message_json_for_case
 
         with patch(
             "backend.agent.compose_message",
@@ -321,10 +326,6 @@ def _run_case_via_api(case: dict[str, Any]) -> dict[str, Any]:
         ):
             response = client.post("/run", json=case)
     else:
-        logger.warning(
-            "[eval] REALPAGE_EVAL_STUB_COMPOSE=false — live composer; "
-            "exact body_match vs JSONL may fail unless criteria are relaxed."
-        )
         response = client.post("/run", json=case)
     if response.status_code != 200:
         raise RuntimeError(f"/run failed during eval: status={response.status_code}")
@@ -371,8 +372,8 @@ def score_output(
     expected_body = str(expected_message.get("body") or "")
     assertion_constraints = (assertions or {}).get("constraints", {})
     if expected_send:
-        compliance_result = json.loads(check_compliance(body, assertion_constraints))
-        compliance_payload = compliance_result.get("result") or {}
+        compliance_env = check_compliance(body, assertion_constraints)
+        compliance_payload = compliance_env.result or {}
         constraints_pass = bool(compliance_payload.get("passed", False))
     else:
         compliance_payload = {"violations": []}
@@ -453,8 +454,10 @@ def run_case(case: dict[str, Any], *, latency_sample_count: int | None = None) -
         agent_samples.append(int((perf_counter() - t0) * 1000))
 
     # Single scoring pass on the last generated output.
+    # With live compose the generated body is already real LLM output — no second
+    # compose call needed. Pass empty string so score_output uses the generated body.
     t0 = perf_counter()
-    if thresholds.get("personalization_score_min") is not None and expected_send:
+    if stub_used and thresholds.get("personalization_score_min") is not None and expected_send:
         personalization_body = _compose_for_personalization(case)
     else:
         personalization_body = ""
@@ -473,8 +476,12 @@ def run_case(case: dict[str, Any], *, latency_sample_count: int | None = None) -
     p95_budget = thresholds.get("p95_latency_ms")
     scores["latency_pass"] = agent_p95 <= float(int(p95_budget)) if p95_budget is not None else True
 
-    # latency_pass is a performance metric — exclude it from the correctness gate.
-    correctness_scores = {k: v for k, v in scores.items() if k != "latency_pass"}
+    # latency_pass is a performance metric — excluded from the correctness gate.
+    # body_match/subject_match/cta_match are exact-string comparisons against the golden
+    # fixture: only meaningful when stub_used=True. With live compose they are
+    # informational only.
+    non_gating = {"latency_pass"} | (set() if stub_used else _STUB_ONLY_SCORES)
+    correctness_scores = {k: v for k, v in scores.items() if k not in non_gating}
     total_wall = sum(agent_samples) + scoring_ms
 
     logger.info(
@@ -504,7 +511,8 @@ def run_case(case: dict[str, Any], *, latency_sample_count: int | None = None) -
         },
         "eval_integrity": {
             "compose_message": "stubbed" if stub_used else "live_openai",
-            "stubbed_composer_notes_exact_body_match": bool(stub_used),
+            "correctness_gate": sorted(correctness_scores.keys()),
+            "informational_only": sorted(non_gating - {"latency_pass"}),
             "latency_sampling_mode": sampling_mode,
             "p95_latency_interpretation": (
                 "P95 of POST /run durations only; compare to case p95_latency_ms. "
@@ -603,14 +611,16 @@ def main() -> None:
     n = max(1, int(n))
     stub = _resolve_eval_stub_compose()
     if stub:
-        logger.info(
-            "[eval] REALPAGE_EVAL_STUB_COMPOSE=true — fixture composer; "
-            "p95_latency_ms reflects /run with stub, not live draft latency."
+        logger.warning(
+            "[eval] REALPAGE_EVAL_STUB_COMPOSE=true — fixture composer active; "
+            "body_match/subject_match/cta_match gate passed. "
+            "Set REALPAGE_EVAL_STUB_COMPOSE=false (default) for production-representative evals."
         )
     else:
-        logger.warning(
-            "[eval] REALPAGE_EVAL_STUB_COMPOSE=false — live OpenAI composer; "
-            "golden body_match may fail unless eval criteria allow semantic drift."
+        logger.info(
+            "[eval] live OpenAI composer — body_match/subject_match/cta_match are "
+            "informational only; correctness gate uses compliance, personalization, "
+            "channel, and next_action."
         )
     print(json.dumps(_summarize_report(run_all(args.path, latency_sample_count=n)), indent=2))
 

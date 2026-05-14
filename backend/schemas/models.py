@@ -1,10 +1,10 @@
 """
-File: schemas.py
+File: models.py
 Purpose: Pydantic models for outreach API inputs, outputs, and eval cases.
 Author: Sreeram
 """
 
-from typing import Self
+from typing import Any, Self
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import (
@@ -16,8 +16,7 @@ from pydantic import (
     model_validator,
 )
 
-from backend.content_policy import outreach_input_must_pass_language_policy
-from backend.schemas_types import (
+from backend.schemas.types import (
     REQUIRED_ASSERTION_STATES,
     Channel,
     IsoDate,
@@ -34,7 +33,29 @@ from backend.schemas_types import (
     PersonaKind,
     ShortText,
 )
-from backend.url_security import analyze_plain_hostname, analyze_url_security
+from backend.core.content_policy import outreach_input_must_pass_language_policy
+from backend.core.url_security import analyze_plain_hostname, analyze_url_security
+
+
+class ToolResultEnvelope(BaseModel):
+    """
+    Standard in-process wrapper for outreach tools before HTTP or persistence boundaries.
+
+    Callers orchestrate using this model directly; serializers use ``model_dump()`` or
+    Pydantic response models rather than embedding ``json.dumps`` in each tool.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    error: str | None = Field(None, description="Human-readable failure reason when absent result.")
+    error_code: str | None = Field(
+        None,
+        description="Stable code for auditing (composer failures, configuration gaps).",
+    )
+    result: dict[str, Any] | None = Field(
+        None,
+        description="Successful payload when execution completed without logical error.",
+    )
 
 
 class ConsentRecord(BaseModel):

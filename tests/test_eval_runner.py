@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from backend.eval_runner import (
+from backend.evals.runner import (
     _percentile_linear,
     load_cases,
     run_all,
@@ -43,7 +43,7 @@ def _eval_runner_ci_safety(monkeypatch: pytest.MonkeyPatch) -> None:
         return 0.92
 
     monkeypatch.setattr(
-        "backend.eval_runner._score_personalization",
+        "backend.evals.runner._score_personalization",
         _deterministic_personalization_score,
     )
 
@@ -84,7 +84,7 @@ def test_score_output_personalization_fails_when_judge_returns_nothing(
     A set personalization_score_min must not pass by omission when the judge cannot run.
     """
 
-    monkeypatch.setattr("backend.eval_runner._score_personalization", lambda *a, **k: None)
+    monkeypatch.setattr("backend.evals.runner._score_personalization", lambda *a, **k: None)
     case = load_cases(SAMPLE_PATH)[0]
     result = run_case(case)
     assert result["scores"].get("personalization_pass") is False

@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from backend.agent import run_agent
-from backend.compose_fixture_stub import compose_message_json_for_case
+from backend.evals.fixture_stub import compose_message_json_for_case
 from backend.schemas import RunRequest
 
 

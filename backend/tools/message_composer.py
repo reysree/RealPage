@@ -12,10 +12,9 @@ from typing import Any
 
 from pydantic import TypeAdapter, ValidationError
 
-from backend.audit_log import append_agent_audit
-from backend.constants import BRAND_STYLE_GUIDE, FAIR_HOUSING_RULES
-from backend.schemas_llm import ComposerLlmOutput
-from backend.schemas_types import LongText
+from backend.core.audit_log import append_agent_audit
+from backend.core.constants import BRAND_STYLE_GUIDE, FAIR_HOUSING_RULES
+from backend.schemas import ComposerLlmOutput, LongText, ToolResultEnvelope
 
 logger = logging.getLogger(__name__)
 
@@ -209,12 +208,12 @@ def compose_message(
     primary_cta: str,
     constraints: dict[str, object] | None = None,
     consent_verification: dict[str, object] | None = None,
-) -> str:
+) -> ToolResultEnvelope:
     """
     TOOL: compose_message
     Purpose: Compose a personalized outreach message for one selected channel.
     When called: After channel selection and before compliance validation.
-    Returns: {"error": str | null, "error_code": str | null, "result": object | null}
+    Returns: ToolResultEnvelope(error, optional error_code, result dict or None).
     Note: Atomic — composes message content only; it does not select, schedule, or approve sending.
 
     Args:
@@ -227,7 +226,7 @@ def compose_message(
         constraints: Assertion constraints (suffix, brand notes, flags) from the case.
         consent_verification: Structured consent check for the selected channel.
     Returns:
-        JSON string with subject, body, CTA, and message rationale when successful.
+        Envelope containing subject/body/CTA/message_reason on success.
     """
 
     missing_key = not os.getenv("OPENAI_API_KEY")
@@ -249,7 +248,7 @@ def compose_message(
             message=msg,
             detail={},
         )
-        return json.dumps({"error": msg, "error_code": code, "result": None})
+        return ToolResultEnvelope(error=msg, error_code=code, result=None)
 
     last_problem: Any = None
 
@@ -273,12 +272,10 @@ def compose_message(
                     constraints,
                 )
                 _validate_final_composer_body(str(composed["body"]))
-                return json.dumps(
-                    {
-                        "error": None,
-                        "error_code": None,
-                        "result": composed,
-                    }
+                return ToolResultEnvelope(
+                    error=None,
+                    error_code=None,
+                    result=composed,
                 )
             except Exception as exc:
                 last_problem = exc
@@ -310,8 +307,7 @@ def compose_message(
         )
         logger.error("[compose_message] llm_retry_exhausted last=%s", last_problem, exc_info=True)
 
-        public_error = json.dumps({"error": msg, "error_code": code, "result": None})
-        return public_error
+        return ToolResultEnvelope(error=msg, error_code=code, result=None)
     except Exception as exc:
         logger.error("[compose_message] unexpected_after_retries error=%s", exc, exc_info=True)
         code = "COMPOSER_UNEXPECTED"
@@ -322,4 +318,4 @@ def compose_message(
             message=msg,
             detail={"error_class": exc.__class__.__name__, "error": str(exc)},
         )
-        return json.dumps({"error": msg, "error_code": code, "result": None})
+        return ToolResultEnvelope(error=msg, error_code=code, result=None)

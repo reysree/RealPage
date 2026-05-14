@@ -4,7 +4,7 @@ Purpose: Tests for outreach content-language screening helpers.
 Author: Sreeram
 """
 
-from backend.content_policy import analyze_inappropriate_content
+from backend.core.content_policy import analyze_inappropriate_content
 
 
 def test_detects_isolated_profanity_token() -> None:

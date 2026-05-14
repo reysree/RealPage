@@ -95,7 +95,7 @@ The function's type annotations become the tool's JSON schema.
 
 ```python
 from agents import function_tool
-import json
+from backend.schemas import ToolResultEnvelope
 
 @function_tool
 def search_knowledge_base(query: str) -> str:
@@ -108,12 +108,14 @@ def search_knowledge_base(query: str) -> str:
     Note: Atomic — one responsibility, no overlap with other tools.
     """
     # implementation
-    return json.dumps({"results": [...]})
+    return ToolResultEnvelope(error=None, result={"results": [...]}).model_dump_json(
+        exclude_none=True
+    )
 ```
 
 Rules for function_tool:
 - Parameter types must be serializable: str, int, float, bool, list, dict
-- Return type must be str — always return json.dumps(...)
+- **Return type must be `str`** at the decorator boundary — build a **`ToolResultEnvelope`** in RealPage Lumina (`backend.schemas`) and return **`model_dump_json(exclude_none=True)`**. Generic SDK samples may use plain `json.dumps` if the serialized shape matches `{error?, error_code?, result?}`.
 - Docstring fields are required: TOOL, Purpose, When called, Returns, Note
 - `When called` must name the specific user intent that triggers this tool — not a restatement of Purpose
 - `Returns` must show the actual JSON shape with field names and types — not prose
@@ -178,7 +180,11 @@ def log_tool_usage(action: str) -> str:
     """
     # context is injected by the SDK — available as a special parameter
     # see RunContextWrapper pattern in SDK docs for full usage
-    return json.dumps({"logged": action})
+    from backend.schemas import ToolResultEnvelope
+
+    return ToolResultEnvelope(error=None, result={"logged": action}).model_dump_json(
+        exclude_none=True
+    )
 ```
 
 For simpler cases in this project: pass session_id as a closure variable
@@ -335,14 +341,21 @@ logger = logging.getLogger(__name__)
 
 @function_tool
 def my_tool(param: str) -> str:
+    from backend.schemas import ToolResultEnvelope
+
     logger.info(f"[my_tool] called with param={param!r}")
     try:
         result = do_something(param)
         logger.info(f"[my_tool] returned {len(result)} results")
-        return json.dumps({"result": result})
-    except Exception as e:
-        logger.error(f"[my_tool] error={e}", exc_info=True)
-        return json.dumps({"error": str(e)})
+        return ToolResultEnvelope(
+            error=None,
+            result={"items": result},
+        ).model_dump_json(exclude_none=True)
+    except Exception as exc:
+        logger.error(f"[my_tool] error={exc}", exc_info=True)
+        return ToolResultEnvelope(error=str(exc), result=None).model_dump_json(
+            exclude_none=True
+        )
 ```
 
 ---
@@ -388,14 +401,19 @@ on that basis and offer to help based on unit features, pricing, or availability
 result = Runner.run(agent, messages)  # Bad — returns coroutine, not RunResult
 result = await Runner.run(agent, messages)  # Good
 
-# 2. Returning a non-string from a tool
+# 2. Returning a non-string from @function_tool
 @function_tool
-def my_tool() -> dict:  # Bad — must return str
+def my_tool() -> dict:  # Bad — SDK requires str payload
     return {"key": "value"}
 
 @function_tool
-def my_tool() -> str:  # Good
-    return json.dumps({"key": "value"})
+def my_tool() -> str:  # Good — serialize envelope at decorator edge
+    from backend.schemas import ToolResultEnvelope
+
+    return ToolResultEnvelope(
+        error=None,
+        result={"key": "value"},
+    ).model_dump_json(exclude_none=True)
 
 # 3. Storing state in the Agent instance
 agent.session_data = {}  # Bad — Agent is shared across requests, this is a race condition

@@ -111,7 +111,7 @@ Indirect: tool output from ChromaDB or SQLite contains adversarial text that man
 
 - Check whether the agent's system prompt contains information that should not be disclosed to users (internal pricing rules, admin logic, DB schema).
 - Check that tool outputs do not include fields that the LLM could leak verbatim (e.g. internal IDs, raw DB rows with PII columns).
-- Flag any `return json.dumps(entire_db_row)` pattern — tools should return only what the agent needs.
+- Flag tool responses that stringify entire database rows or unstructured blobs — return minimal fields via `ToolResultEnvelope`-style payloads (or trimmed dicts).
 
 ### Model/Tool Abuse
 
