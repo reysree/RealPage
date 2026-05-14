@@ -18,6 +18,7 @@ CHANGED=$(find "$ROOT/backend" "$ROOT/frontend/src" \
   -newer "$SENTINEL" \
   \( -name "*.py" -o -name "*.jsx" -o -name "*.js" \) \
   ! -path "*/.venv/*" \
+  ! -path "*/.venv-evals/*" \
   ! -path "*/node_modules/*" \
   2>/dev/null || true)
 
@@ -33,12 +34,19 @@ fi
 # don't re-trigger on the next turn.
 touch "$SENTINEL"
 
-# Resolve Python interpreter: prefer venv, fall back to system.
-PYTHON="$ROOT/backend/.venv/Scripts/python"
-if [ ! -f "$PYTHON" ]; then
-  PYTHON="$ROOT/backend/.venv/bin/python"
-fi
-if [ ! -f "$PYTHON" ]; then
+# Resolve Python interpreter: prefer project venvs, fall back to system.
+PYTHON=""
+for candidate in \
+  "$ROOT/backend/.venv-evals/Scripts/python" \
+  "$ROOT/backend/.venv-evals/bin/python" \
+  "$ROOT/backend/.venv/Scripts/python" \
+  "$ROOT/backend/.venv/bin/python"; do
+  if [ -f "$candidate" ]; then
+    PYTHON="$candidate"
+    break
+  fi
+done
+if [ -z "$PYTHON" ]; then
   PYTHON=$(command -v python3 2>/dev/null || command -v python 2>/dev/null || echo "python")
 fi
 
@@ -67,18 +75,17 @@ run_audit() {
       fi
     done <<< "$PY_CHANGED"
 
-    if $SYNTAX_OK && [ -d "$ROOT/backend" ]; then
-      cd "$ROOT/backend"
-      for module in schemas db tools agent main; do
-        [ -f "${module}.py" ] || continue
-        if "$PYTHON" -c "import ${module}" 2>/dev/null; then
-          echo "[PASS] import: ${module}"
+    # Import check: run from repo root so backend.* package paths resolve correctly.
+    if $SYNTAX_OK; then
+      cd "$ROOT"
+      for module in schemas tools agent main; do
+        if PYTHONPATH="$ROOT" "$PYTHON" -c "import backend.${module}" 2>/dev/null; then
+          echo "[PASS] import: backend.${module}"
         else
-          echo "[FAIL] import: ${module}"
-          "$PYTHON" -c "import ${module}" 2>&1 | sed 's/^/       /'
+          echo "[FAIL] import: backend.${module}"
+          PYTHONPATH="$ROOT" "$PYTHON" -c "import backend.${module}" 2>&1 | sed 's/^/       /'
         fi
       done
-      cd "$ROOT"
     fi
   fi
 

@@ -1,0 +1,20 @@
+{
+  "send": false,
+  "decision_reason": "All channels are opted out, so there is no eligible communication channel.",
+  "next_message": null,
+  "next_action": {
+    "type": "human_in_the_loop",
+    "name": "pipeline_blocked",
+    "value": null
+  },
+  "audit_trail": [
+    {
+      "node": "input_security",
+      "decision": true
+    },
+    {
+      "node": "channel_selector",
+      "decision": false
+    }
+  ]
+}

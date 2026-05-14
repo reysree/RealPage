@@ -7,7 +7,7 @@ Mock at **system boundaries** only:
 - Time/randomness
 - File system (sometimes)
 
-For RealPage Lumina, prefer temporary SQLite databases and small seeded Chroma collections over mocks for project-owned persistence paths. Mock OpenAI calls, third-party APIs, clock/randomness, and network-only dependencies.
+For this project, prefer temporary SQLite databases and small seeded Chroma collections over mocks for project-owned persistence paths. Mock OpenAI calls, third-party APIs, clock/randomness, and network-only dependencies.
 
 Don't mock:
 

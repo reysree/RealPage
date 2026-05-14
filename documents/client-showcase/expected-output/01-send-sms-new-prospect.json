@@ -1,0 +1,18 @@
+{
+  "send": true,
+  "next_message": {
+    "channel": "sms",
+    "send_at": "2025-12-09T09:00:00-06:00",
+    "subject": null,
+    "body": "SMS outreach personalized to Taylor and Oak Ridge Apartments, ending with Reply STOP to opt out.",
+    "cta": {
+      "type": "schedule_tour",
+      "options": ["1. Book a tour"]
+    }
+  },
+  "next_action": {
+    "type": "start_cadence",
+    "name": "prospect_welcome_short_horizon",
+    "value": null
+  }
+}

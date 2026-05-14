@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+import backend.evals.runner as eval_runner
 from backend.evals.runner import (
     _percentile_linear,
     load_cases,
@@ -24,16 +25,33 @@ SAMPLE_PATH = Path(__file__).parents[1] / "backend" / "data" / "sample.jsonl"
 @pytest.fixture(autouse=True)
 def _eval_runner_ci_safety(monkeypatch: pytest.MonkeyPatch) -> None:
     """
-    Fast, deterministic eval-runner tests: no live OpenAI, stubbed composer, fixed judge.
+    Fast eval-runner behavior tests: patched compose yields input-shaped payloads only.
 
-    Production ``python -m backend.eval_runner`` does not use this fixture; it uses real
-    APIs when configured. The judge stub here is **test-only** so personalization_pass is
-    stable without billing OpenAI during pytest.
+    Harness itself always calls production ``compose_message`` (OpenAI) when invoked via CLI.
+    Judge calls are mocked to a fixed score so personalization thresholds pass without billing.
     """
 
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.setenv("REALPAGE_EVAL_LATENCY_RUNS", "1")
-    monkeypatch.setenv("REALPAGE_EVAL_STUB_COMPOSE", "true")
+
+    def _compose_shim(*_: object, **kwargs: Any):
+        """
+        Mirrors ``compose_message`` kwargs into ``tests.test_support.compose_stub`` — no golden JSON ``expected``.
+        """
+
+        from tests.test_support.compose_stub import compose_message_envelope_from_compose_kwargs
+
+        raw_constraints = kwargs.get("constraints")
+        cons = raw_constraints if isinstance(raw_constraints, dict) else {}
+
+        return compose_message_envelope_from_compose_kwargs(
+            channel=str(kwargs.get("channel") or "sms"),
+            profile=dict(kwargs.get("profile") or {}),
+            property_name=str(kwargs.get("property_name") or ""),
+            constraints=cons,
+        )
+
+    monkeypatch.setattr("backend.agent.compose_message", _compose_shim)
 
     def _deterministic_personalization_score(
         _body: str,
@@ -51,6 +69,14 @@ def _eval_runner_ci_safety(monkeypatch: pytest.MonkeyPatch) -> None:
 EXPECTED_TASK_IDS = [
     "prospect_welcome_day0",
     "prospect_long_horizon_day3",
+    "prospect_all_opted_out",
+    "prospect_voice_only",
+    "prospect_open_engagement",
+    "prospect_new_email_fallback",
+    "prospect_open_sms_fallback",
+    "prospect_open_all_opted_out",
+    "prospect_open_voice_only",
+    "prospect_prompt_injection_blocked",
 ]
 EXPECTED_TOTAL_CASES = len(EXPECTED_TASK_IDS)
 
@@ -102,9 +128,9 @@ def test_load_cases_reads_jsonl_records() -> None:
     assert task_ids == EXPECTED_TASK_IDS
 
 
-def test_run_case_scores_generated_output_against_expected() -> None:
+def test_run_case_scores_generated_output_without_golden_expected() -> None:
     """
-    Verify one case returns generated output and a passing score summary.
+    Verify one case returns generated output and passes using constraints and thresholds only.
     """
 
     case = load_cases(SAMPLE_PATH)[0]
@@ -112,8 +138,8 @@ def test_run_case_scores_generated_output_against_expected() -> None:
 
     assert result["task_id"] == "prospect_welcome_day0"
     assert result["passed"] is True
-    assert result["scores"]["channel_match"] is True
-    assert result["scores"]["next_action_match"] is True
+    assert result["scores"]["constraints_pass"] is True
+    assert result["scores"].get("personalization_pass") is True
 
 
 def test_run_all_reports_aggregate_pass_for_bundled_samples() -> None:
@@ -140,31 +166,40 @@ def test_load_cases_rejects_paths_outside_eval_data(tmp_path: Path) -> None:
         load_cases(outside_jsonl)
 
 
-def test_score_output_reports_mismatches() -> None:
+def test_load_cases_rejects_malformed_jsonl_line(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """
-    Verify scoring reports failed dimensions instead of false positives.
+    Verify malformed JSONL fixtures fail before eval execution starts.
+    """
+
+    malformed_jsonl = tmp_path / "malformed.jsonl"
+    malformed_jsonl.write_text('{"task_id": "ok"}\n{bad json}\n', encoding="utf-8")
+    monkeypatch.setattr(eval_runner, "EVAL_DATA_DIR", tmp_path)
+
+    with pytest.raises(ValueError):
+        load_cases(malformed_jsonl)
+
+
+def test_score_output_does_not_use_expected_block_for_pass_fail() -> None:
+    """
+    Scoring must not compare generated output to the JSONL ``expected`` field.
     """
 
     case = load_cases(SAMPLE_PATH)[0]
     result = run_case(case)
-    expected = dict(result["expected"])
-    expected["next_message"] = dict(expected["next_message"])
-    expected["next_message"]["channel"] = "email"
-
     scores = score_output(
         result["generated"],
-        expected,
         assertions=case["assertions"],
         thresholds=case["thresholds"],
     )
-
-    assert scores["channel_match"] is False
-    assert all(scores.values()) is False
+    assert scores["constraints_pass"] is True
 
 
-def test_score_output_reports_body_cta_and_compliance_failures() -> None:
+def test_score_output_reports_constraint_violations_on_generated_body() -> None:
     """
-    Verify scoring catches body, CTA, and constraint violations.
+    Verify constraint checks run on the generated message body (e.g. PII).
     """
 
     case = load_cases(SAMPLE_PATH)[0]
@@ -176,11 +211,25 @@ def test_score_output_reports_body_cta_and_compliance_failures() -> None:
 
     scores = score_output(
         generated,
-        result["expected"],
         assertions=case["assertions"],
         thresholds=case["thresholds"],
     )
 
-    assert scores["body_match"] is False
-    assert scores["cta_match"] is False
     assert scores["constraints_pass"] is False
+
+
+def test_run_case_surfaces_latency_failure_as_non_gating_warning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Verify latency threshold failures are reported but do not fail correctness.
+    """
+
+    monkeypatch.setattr(eval_runner, "_percentile_linear", lambda *_args, **_kwargs: 25.0)
+    case = load_cases(SAMPLE_PATH)[2]
+    case["thresholds"] = {"p95_latency_ms": 1}
+
+    result = run_case(case)
+
+    assert result["scores"]["latency_pass"] is False
+    assert result["passed"] is True

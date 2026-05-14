@@ -1,9 +1,9 @@
 ---
-description: Core RealPage Lumina project rules
+description: Core Context-Aware Message Sending Bot project rules
 alwaysApply: true
 ---
 
-# RealPage Lumina Core Rules
+# Context-Aware Message Sending Bot — Core Rules
 
 - Keep changes surgical: touch only files required by the request and preserve user edits.
 - Prefer the existing FastAPI, OpenAI Agents SDK, ChromaDB, SQLite, React, and Tailwind patterns.

@@ -12,6 +12,21 @@ from pydantic import ValidationError
 
 from backend.core.constants import BRAND_STYLE_GUIDE, FAIR_HOUSING_RULES
 from backend.schemas import AgentOutput, MessageOutput, RunRequest, RunResponse
+from backend.schemas import TestCase as EvalTestCase
+
+
+EXPECTED_TASK_IDS = [
+    "prospect_welcome_day0",
+    "prospect_long_horizon_day3",
+    "prospect_all_opted_out",
+    "prospect_voice_only",
+    "prospect_open_engagement",
+    "prospect_new_email_fallback",
+    "prospect_open_sms_fallback",
+    "prospect_open_all_opted_out",
+    "prospect_open_voice_only",
+    "prospect_prompt_injection_blocked",
+]
 
 
 def test_run_request_validates_sample_jsonl_record() -> None:
@@ -58,13 +73,34 @@ def test_all_sample_records_and_policy_constants_are_loadable() -> None:
         if line.strip()
     ]
     records = [RunRequest.model_validate(json.loads(line)) for line in lines]
+    task_ids = [record.task_id for record in records]
 
-    assert len(records) >= 2
-    assert records[0].task_id == "prospect_welcome_day0"
-    assert records[1].task_id == "prospect_long_horizon_day3"
+    assert task_ids == EXPECTED_TASK_IDS
+    assert len(task_ids) == len(set(task_ids))
     assert len(lines) == len(records)
     assert "Fair Housing Act" in FAIR_HOUSING_RULES
     assert "Always end with opt-out instruction" in BRAND_STYLE_GUIDE
+
+
+def test_root_sample_json_mirrors_canonical_jsonl_fixture() -> None:
+    """
+    Verify the demo JSON fixture cannot drift from the canonical JSONL eval cases.
+    """
+
+    repo_root = Path(__file__).parents[1]
+    jsonl_records = [
+        EvalTestCase.model_validate(json.loads(line)).model_dump(mode="json")
+        for line in (repo_root / "backend" / "data" / "sample.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    root_records = [
+        EvalTestCase.model_validate(item).model_dump(mode="json")
+        for item in json.loads((repo_root / "sample.json").read_text(encoding="utf-8"))
+    ]
+
+    assert root_records == jsonl_records
 
 
 def test_run_request_rejects_unexpected_profile_fields_and_channels() -> None:

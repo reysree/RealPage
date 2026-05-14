@@ -1,5 +1,5 @@
 # Architecture Decision Skill
-# RealPage Lumina — AI Property Management Platform
+# Context-Aware Message Sending Bot
 
 ## Purpose
 
@@ -49,7 +49,7 @@ Agent (GPT-4o + system prompt)
 from agents import Agent, Runner, function_tool
 
 agent = Agent(
-    name="Lumina Leasing Agent",
+    name="Outreach Agent",
     instructions=SYSTEM_PROMPT,
     model="gpt-4o",
     tools=[search_knowledge_base, calculate],
@@ -88,7 +88,7 @@ leasing_agent = Agent(name="Leasing", tools=[search_units, check_availability])
 maintenance_agent = Agent(name="Maintenance", tools=[submit_request, check_status])
 
 orchestrator = Agent(
-    name="Lumina Orchestrator",
+    name="Outreach Orchestrator",
     instructions="Route to the correct specialist based on user intent.",
     tools=[handoff(leasing_agent), handoff(maintenance_agent)],
 )

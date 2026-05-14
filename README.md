@@ -1,4 +1,4 @@
-# RealPage Lumina
+# Context-Aware Message Sending Bot
 
 Context-aware outreach agent for property management. The agent reads structured prospect records and decides autonomously: whether to communicate, which channel to use, what to say, and when to send. No rules are hardcoded — all logic is inferred from input data.
 
@@ -28,8 +28,8 @@ realpage/
 │   │   ├── content_policy.py  # Profanity/extremism screening
 │   │   └── url_security.py    # URL/hostname safety helpers
 │   ├── evals/
-│   │   ├── runner.py        # JSONL eval harness — run cases, score output
-│   │   └── fixture_stub.py  # Offline fixture stubs for CI
+│   │   ├── __init__.py
+│   │   └── runner.py        # JSONL eval harness — CLI, load cases, score output
 │   ├── tools/
 │   │   ├── __init__.py      # ALL_TOOLS registry
 │   │   ├── channel_selector.py
@@ -49,7 +49,7 @@ realpage/
 │   │   └── api.js           # runCase() and runAll()
 │   └── package.json
 │
-├── tests/                   # pytest test suite
+├── tests/                   # pytest (see test_support/ for compose doubles)
 ├── .claude/                 # Claude Code harness — agents, skills, hooks, commands
 ├── recall/                  # Architect phase-0 decision documents
 ├── logs/                    # Agent checkpoint files (git-ignored)
@@ -102,16 +102,10 @@ Excludes live LLM eval tests by default (skipped when `OPENAI_API_KEY` is absent
 
 ### 5. Evals
 
-Run the JSONL eval harness against the bundled sample cases:
+Run the JSONL eval harness against the bundled sample cases. Requires `OPENAI_API_KEY`: `compose_message` uses OpenAI; case thresholds may invoke the OpenAI personalization judge.
 
 ```bash
 python -m backend.evals.runner
-```
-
-By default uses live OpenAI composition. To run offline with fixture stubs (no API key required):
-
-```bash
-REALPAGE_EVAL_STUB_COMPOSE=true python -m backend.evals.runner
 ```
 
 CLI options:
@@ -132,7 +126,7 @@ input security → channel selection → consent check → timing → compose �
 
 Each step is an in-process tool returning `ToolResultEnvelope`. The pipeline blocks on any failure and returns `send=false` — no partial sends.
 
-Eval cases live in `backend/data/sample.jsonl`. Each case defines `input`, `assertions`, `thresholds`, and `expected` output. The runner scores generated output against expected using compliance checks and an LLM personalization judge.
+Eval cases live in `backend/data/sample.jsonl`. Each case defines `input`, `assertions`, `thresholds`, and illustrative `expected` output. Pass/fail uses constraints and thresholds on the composed message; personalization uses an LLM judge on that body—not lexical match against `expected`.
 
 ## Development Workflow
 

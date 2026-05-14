@@ -1,4 +1,4 @@
-# RealPage Lumina Agent Instructions
+# Context-Aware Message Sending Bot — Agent Instructions
 
 This project uses Cursor-native harness files. Start with these:
 

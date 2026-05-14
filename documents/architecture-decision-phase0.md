@@ -114,7 +114,7 @@ BRAND_STYLE_GUIDE = """
 
 ```python
 Agent(
-    name="Lumina Outreach Agent",
+    name="Outreach Agent",
     instructions=SYSTEM_PROMPT,   # includes FAIR_HOUSING_RULES + BRAND_STYLE_GUIDE
     model="gpt-4o",
     tools=ALL_TOOLS,

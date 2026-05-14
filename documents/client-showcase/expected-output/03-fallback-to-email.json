@@ -1,0 +1,19 @@
+{
+  "send": true,
+  "decision_reason": "SMS is the first preference, but sms_opt_in is false, so the agent selects the next eligible preferred channel: email.",
+  "next_message": {
+    "channel": "email",
+    "send_at": "2025-12-07T09:00:00-05:00",
+    "subject": "Email subject personalized to Oak Ridge and Taylor's pool interest",
+    "body": "Email outreach uses the allowed oakridge.example domain and email opt-out suffix.",
+    "cta": {
+      "type": "book_tour",
+      "link": "https://oakridge.example/tour"
+    }
+  },
+  "next_action": {
+    "type": "start_cadence",
+    "name": "prospect_welcome_long_horizon",
+    "value": null
+  }
+}

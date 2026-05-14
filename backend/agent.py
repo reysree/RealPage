@@ -5,10 +5,11 @@ Author: Sreeram
 """
 
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 from backend.core.audit_log import append_agent_audit
-from backend.schemas import AgentOutput, MessageOutput, NextAction, RunRequest, ToolResultEnvelope
+from backend.schemas import AgentOutput, AuditTrailEntry, MessageOutput, NextAction, RunRequest, ToolResultEnvelope
 from backend.tools.channel_selector import select_channel
 from backend.tools.compliance import check_compliance
 from backend.tools.consent import check_consent
@@ -125,10 +126,12 @@ def _dump_output(agent_output: AgentOutput) -> dict[str, Any]:
     return agent_output.model_dump(mode="python", exclude_none=False)
 
 
-def _empty_output() -> dict[str, Any]:
+def _empty_output(audit_trail: list[AuditTrailEntry] | None = None) -> dict[str, Any]:
     """
     Create the standard no-send output shape.
 
+    Args:
+        audit_trail: Optional audit trail entries to include.
     Returns:
         Agent output dictionary with send=false and all message fields empty.
     """
@@ -142,6 +145,7 @@ def _empty_output() -> dict[str, Any]:
                 name="pipeline_blocked",
                 value=None,
             ),
+            audit_trail=audit_trail,
         )
     )
 
@@ -178,6 +182,16 @@ def _extract_text_fields(request: RunRequest) -> dict[str, str]:
     return fields
 
 
+def _get_timestamp() -> str:
+    """
+    Get current timestamp in ISO8601 format.
+
+    Returns:
+        ISO8601 formatted timestamp.
+    """
+    return datetime.now(timezone.utc).isoformat()
+
+
 def run_agent(case_input: dict[str, Any]) -> dict[str, Any]:
     """
     Run one stateless outreach case through selection, composition, and compliance.
@@ -190,33 +204,115 @@ def run_agent(case_input: dict[str, Any]) -> dict[str, Any]:
 
     request = RunRequest.model_validate(case_input)
     constraints = request.assertions.constraints.model_dump(exclude_none=True)
+    audit_trail: list[AuditTrailEntry] = []
 
     security_result = _unwrap_tool_result(
         check_input_security(_extract_text_fields(request)),
         "check_input_security",
     )
     if security_result.get("passed") is not True:
+        audit_trail.append(
+            AuditTrailEntry(
+                node="input_security",
+                decision=False,
+                reasoning=f"Security screen blocked input: {security_result.get('risk_level')}",
+                timestamp=_get_timestamp(),
+            )
+        )
         logger.warning(
             "[run_agent] input blocked by security screen: risk_level=%s flags=%s",
             security_result.get("risk_level"),
             security_result.get("flags"),
         )
-        return _empty_output()
+        output = AgentOutput(
+            send=False,
+            next_message=None,
+            next_action=NextAction(
+                type="human_in_the_loop",
+                name="pipeline_blocked",
+                value=None,
+            ),
+            audit_trail=audit_trail,
+        )
+        return _dump_output(output)
+
+    audit_trail.append(
+        AuditTrailEntry(
+            node="input_security",
+            decision=True,
+            reasoning="Input passed security screening",
+            timestamp=_get_timestamp(),
+        )
+    )
 
     channel_result = _unwrap_tool_result(
         select_channel(request.channel_preferences, request.consent.model_dump()),
         "select_channel",
     )
     if channel_result.get("send") is not True:
-        return _empty_output()
+        audit_trail.append(
+            AuditTrailEntry(
+                node="channel_selector",
+                decision=False,
+                reasoning=f"No eligible channel in preferences: {request.channel_preferences}",
+                timestamp=_get_timestamp(),
+            )
+        )
+        output = AgentOutput(
+            send=False,
+            next_message=None,
+            next_action=NextAction(
+                type="human_in_the_loop",
+                name="pipeline_blocked",
+                value=None,
+            ),
+            audit_trail=audit_trail,
+        )
+        return _dump_output(output)
 
     selected_channel = str(channel_result["selected_channel"])
+    audit_trail.append(
+        AuditTrailEntry(
+            node="channel_selector",
+            decision=True,
+            reasoning=f"Selected channel: {selected_channel}",
+            timestamp=_get_timestamp(),
+        )
+    )
+
     consent_for_channel = _unwrap_tool_result(
         check_consent(selected_channel, request.consent.model_dump()),
         "check_consent",
     )
     if consent_for_channel.get("eligible") is not True:
-        return _empty_output()
+        audit_trail.append(
+            AuditTrailEntry(
+                node="consent",
+                decision=False,
+                reasoning=f"Channel {selected_channel} not consented",
+                timestamp=_get_timestamp(),
+            )
+        )
+        output = AgentOutput(
+            send=False,
+            next_message=None,
+            next_action=NextAction(
+                type="human_in_the_loop",
+                name="pipeline_blocked",
+                value=None,
+            ),
+            audit_trail=audit_trail,
+        )
+        return _dump_output(output)
+
+    audit_trail.append(
+        AuditTrailEntry(
+            node="consent",
+            decision=True,
+            reasoning=f"Consent verified for {selected_channel}",
+            timestamp=_get_timestamp(),
+        )
+    )
 
     timing_result = _unwrap_tool_result(
         determine_send_time(
@@ -226,6 +322,15 @@ def run_agent(case_input: dict[str, Any]) -> dict[str, Any]:
         ),
         "determine_send_time",
     )
+    audit_trail.append(
+        AuditTrailEntry(
+            node="timing",
+            decision=True,
+            reasoning=f"Scheduled for {timing_result.get('send_at')}",
+            timestamp=_get_timestamp(),
+        )
+    )
+
     compose_envelope = compose_message(
         channel=selected_channel,
         persona=request.persona,
@@ -242,13 +347,68 @@ def run_agent(case_input: dict[str, Any]) -> dict[str, Any]:
     )
     composer_result = _unwrap_compose_tool(compose_envelope)
     if composer_result is None:
-        return _empty_output()
+        audit_trail.append(
+            AuditTrailEntry(
+                node="compose_message",
+                decision=False,
+                reasoning="Message composition failed",
+                timestamp=_get_timestamp(),
+            )
+        )
+        output = AgentOutput(
+            send=False,
+            next_message=None,
+            next_action=NextAction(
+                type="human_in_the_loop",
+                name="pipeline_blocked",
+                value=None,
+            ),
+            audit_trail=audit_trail,
+        )
+        return _dump_output(output)
+
+    audit_trail.append(
+        AuditTrailEntry(
+            node="compose_message",
+            decision=True,
+            reasoning="Message drafted successfully",
+            timestamp=_get_timestamp(),
+        )
+    )
+
     compliance_result = _unwrap_tool_result(
         check_compliance(str(composer_result["body"]), constraints),
         "check_compliance",
     )
     if compliance_result.get("passed") is not True:
-        return _empty_output()
+        audit_trail.append(
+            AuditTrailEntry(
+                node="compliance",
+                decision=False,
+                reasoning=f"Compliance violations: {compliance_result.get('violations')}",
+                timestamp=_get_timestamp(),
+            )
+        )
+        output = AgentOutput(
+            send=False,
+            next_message=None,
+            next_action=NextAction(
+                type="human_in_the_loop",
+                name="pipeline_blocked",
+                value=None,
+            ),
+            audit_trail=audit_trail,
+        )
+        return _dump_output(output)
+
+    audit_trail.append(
+        AuditTrailEntry(
+            node="compliance",
+            decision=True,
+            reasoning="Message passed compliance checks",
+            timestamp=_get_timestamp(),
+        )
+    )
 
     output = AgentOutput(
         send=True,
@@ -260,5 +420,6 @@ def run_agent(case_input: dict[str, Any]) -> dict[str, Any]:
             cta=composer_result["cta"],
         ),
         next_action=_build_next_action(request),
+        audit_trail=audit_trail,
     )
     return _dump_output(output)

@@ -130,14 +130,15 @@ Fixed responsibilities. Do not add agents without updating this table and the Ha
 | Agent | File | Runs when | Skills it reads | Outputs |
 |-------|------|-----------|-----------------|---------|
 | Solution Architect | `.claude/agents/solution-architect.md` | Phase 0; major requirement changes | `architecture-decision-skill`, `openai-sdk-guide`, `recall` | `recall/YYYYMMDD_HHMM_architect_phase0.md` + `logs/` checkpoint |
-| Developer | `.claude/agents/distinguished-engineer.md` | Phases 1–5; fixing audit flags | `python-guide`, `openai-sdk-guide`, `react-guide`, `tdd`, `recall` | `logs/YYYYMMDD_HHMM_developer_phaseN.md` |
+| Developer | `.claude/agents/distinguished-engineer.md` | Phases 1–5; fixing audit flags | `python-guide`, `openai-sdk-guide`, `sqlite3-guide`, `react-guide`, `tdd`, `recall` | `logs/YYYYMMDD_HHMM_developer_phaseN.md` |
 | Security Analyst | `.claude/agents/security-analyst.md` | After each developer phase; before gate opens | `security-analyst-guide`, `recall` | `logs/YYYYMMDD_HHMM_security-analyst_phaseN.md` |
 | Eval Agent | `.claude/agents/eval-agent.md` | After Phase 4 (agent + API complete); before Phase 5 gate | `recall` | `logs/YYYYMMDD_HHMM_eval_phaseN.md` |
-| Audit | *(not yet created)* | After each developer phase | `python-guide`, `tdd`, `recall` | `logs/YYYYMMDD_HHMM_audit_phaseN.md` |
+| QA Analyst | `.claude/agents/qa-analyst.md` | Phases 2–5; audit test coverage and identify gaps | `recall` | `logs/YYYYMMDD_HHMM_qa-analyst_coverage.md` |
+| Audit | *(not yet created)* | After each developer phase | `python-guide`, `sqlite3-guide`, `tdd`, `recall` | `logs/YYYYMMDD_HHMM_audit_phaseN.md` |
 | UX Writer | `.claude/agents/ux-writer.md` | UI copy, labels, errors, onboarding | *(none — self-contained)* | Copy delivered inline |
 | Prompt Engineer | `.claude/agents/prompt-engineer.md` | Write/review agent system prompts and `@function_tool` docstrings | `recall` | `logs/YYYYMMDD_HHMM_prompt-engineer_<descriptor>.md` |
 
-**Gate rule:** Phase N does not open until `developer_phaseN` = COMPLETE and `security_phaseN` = PASS and `eval_phaseN` = PASS and `audit_phaseN` = PASS with no FAIL items.
+**Gate rule:** Phase N does not open until `developer_phaseN` = COMPLETE and `security_phaseN` = PASS and `eval_phaseN` = PASS and `qa_phaseN` = PASS and `audit_phaseN` = PASS with no FAIL items.
 
 ---
 
@@ -153,6 +154,7 @@ Everything in `.claude/`. Update this table whenever a file is added or removed.
 | `distinguished-engineer.md` | Phases 1–5 implementation; reads architect recall | Ask Claude to act as Developer Agent |
 | `security-analyst.md` | Post-phase security audit; produces PASS/FAIL/PARTIAL report covering OWASP, AI security, PII, SOC2, GDPR, Fair Housing Act | Ask Claude to act as Security Analyst |
 | `eval-agent.md` | Runs JSONL test cases through the agent; scores output against expected; produces PASS/FAIL/PARTIAL eval report | Ask Claude to act as Eval Agent |
+| `qa-analyst.md` | Audit test coverage across backend tests, eval fixtures, and frontend e2e; identifies coverage gaps; produces PASS/PARTIAL/FAIL audit report with recommendations | Ask Claude to act as QA Analyst |
 | `ux-writer.md` | UI copy, button labels, error messages, onboarding flows | Ask Claude to act as UX Writer |
 | `prompt-engineer.md` | Write/review system prompts and `@function_tool` docstrings; anti-pattern audit of agent files | Ask Claude to act as Prompt Engineer |
 | *(audit_agent.md — not yet created)* | Post-phase correctness verification; produces PASS/FAIL audit report | — |
@@ -166,6 +168,7 @@ Skills are reference documents agents read before acting. They are not slash com
 | `architecture-decision-skill/` | Architecture pattern selection, tool design, phase planning | Solution Architect |
 | `openai-sdk-guide/` | OpenAI Agents SDK patterns, `@function_tool`, `Runner` usage | Architect, Developer |
 | `python-guide/` | Python coding standards, type hints, error handling, logging | Developer, Audit |
+| `sqlite3-guide/` | Standard-library `sqlite3`: queries, transactions, schema, FastAPI concurrency | Developer, Audit; Security Analyst when SQL persistence is in scope |
 | `react-guide/` | React + Vite patterns for the frontend | Developer (Phase 5) |
 | `tdd/` | Behavior-first red-green-refactor workflow for features and bug fixes | Developer, Audit |
 | `recall/` | Checkpoint protocol — how to read and write `logs/` files | All agents |
@@ -180,6 +183,7 @@ Commands are slash commands invoked during a session.
 |------|---------|-------------|
 | `audit-codebase.md` | `/audit-codebase` | Full structural + correctness audit: file existence, Python syntax, imports, ESLint, recall coverage |
 | `recall.md` | `/recall` | Write a checkpoint to `logs/` at phase or task completion |
+| `debug.md` | `/debug` | Evidence-first debugging: 37% gather, hypotheses, repro commands, verify with pytest/evals |
 
 ### Scripts — `.claude/scripts/`
 
@@ -350,7 +354,7 @@ frontend/
                        eval-agent.md, ux-writer.md, prompt-engineer.md
     skills/          → python-guide, openai-sdk-guide, architecture-decision-skill, react-guide,
                        tdd, recall, security-analyst-guide, harness-guide
-    commands/        → audit-codebase.md, recall.md
+    commands/        → audit-codebase.md, recall.md, debug.md
     scripts/         → audit.sh (Stop hook), pre-write-check.sh (PreToolUse hook)
     settings.json    → hooks: PreToolUse(Write), Stop
 

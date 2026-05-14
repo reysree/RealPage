@@ -16,6 +16,7 @@ Before doing anything else, read in this order:
 2. `.claude/skills/recall/SKILL.md` — checkpoint protocol you must follow at the end of this phase
 3. `.claude/skills/architecture-decision-skill/SKILL.md` — architecture decision standards
 4. `.claude/skills/langgraph-guide/SKILL.md` — LangGraph StateGraph patterns (preferred framework). If this file does not exist, note it as an Open Question and read `.claude/skills/openai-sdk-guide/SKILL.md` as fallback.
+5. **If** the design includes SQLite file persistence: `.claude/skills/sqlite3-guide/SKILL.md` — stdlib constraints and data-layer boundaries
 
 ---
 
@@ -204,7 +205,7 @@ List anything that requires human input before Phase 1 can begin.
 
 ## Standard Phase Framework
 
-This is the established build order for RealPage Lumina. Your Section 8 output must
+This is the established build order for this project. Your Section 8 output must
 map each phase to concrete deliverables for the domain you are designing. Do not
 invent new phases or skip phases — if a phase is not applicable, say so and justify.
 

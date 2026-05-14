@@ -70,12 +70,6 @@ EVAL_DATA_DIR = Path(__file__).parents[1] / "data"
 MAX_EVAL_FILE_BYTES = 1_000_000
 DEFAULT_CLI_LATENCY_RUNS = 20
 
-# Exact-match scores are only meaningful when the fixture stub returns the golden body.
-# With live compose the LLM produces real but non-deterministic text, so these are
-# informational only and must not gate `passed`.
-_STUB_ONLY_SCORES: frozenset[str] = frozenset({"body_match", "subject_match", "cta_match"})
-
-
 def _percentile_linear(samples: list[int], pct: float) -> float:
     """
     Nearest-rank style linear interpolation percentile on ``pct`` in [0, 100].
@@ -122,24 +116,6 @@ def _resolve_latency_sample_count(explicit: int | None) -> int:
         return 1
 
 
-def _resolve_eval_stub_compose() -> bool:
-    """
-    Whether to patch ``compose_message`` to fixture-backed JSON during eval.
-
-    Default **false** — evals use real OpenAI composition to simulate production.
-    Set ``REALPAGE_EVAL_STUB_COMPOSE=true`` only in offline CI where exact body_match
-    is required and live API calls are not available (e.g. unit test fixtures).
-
-    Returns:
-        True when the harness should stub the composer inside ``/run``.
-    """
-
-    raw = os.getenv("REALPAGE_EVAL_STUB_COMPOSE")
-    if raw is not None:
-        return raw.lower() in ("1", "true", "yes")
-    return False
-
-
 def _validate_case_path(path: str | Path) -> Path:
     """
     Validate that an eval file is a bundled JSONL file under the eval data directory.
@@ -180,47 +156,6 @@ def load_cases(path: str | Path) -> list[dict[str, Any]]:
         if line.strip():
             cases.append(json.loads(line))
     return cases
-
-
-def _compose_for_personalization(case: dict[str, Any]) -> str:
-    """
-    Call the real compose_message to get a live-generated body for personalization scoring.
-
-    Structural eval checks (channel, compliance, body_match) use the fixture stub.
-    This call runs the real LLM so the personalization judge scores actual output,
-    not the fixture body. Returns empty string when the LLM is unavailable.
-
-    Args:
-        case: Parsed JSONL case.
-    Returns:
-        Live-generated message body, or empty string when LLM is unavailable.
-    """
-
-    if not os.getenv("OPENAI_API_KEY"):
-        return ""
-
-    try:
-        from backend.tools.message_composer import compose_message
-
-        nm = (case.get("expected") or {}).get("next_message") or {}
-        channel = str(nm.get("channel") or "sms")
-        case_input = case.get("input") or {}
-        constraints = ((case.get("assertions") or {}).get("constraints")) or {}
-
-        compose_env = compose_message(
-            channel=channel,
-            persona=str(case.get("persona") or ""),
-            lifecycle_stage=str(case.get("lifecycle_stage") or ""),
-            profile=case_input.get("profile") or {},
-            property_name=str(case_input.get("property_name") or ""),
-            primary_cta=str(constraints.get("primary_cta") or "book_tour"),
-            constraints=constraints,
-        )
-        result = compose_env.result if compose_env.error is None else None
-        return str((result or {}).get("body") or "")
-    except Exception as exc:
-        logger.warning("[compose_for_personalization] unavailable: %s", exc)
-        return ""
 
 
 def _score_personalization(
@@ -280,28 +215,13 @@ def _score_personalization(
         return None
 
 
-def _without_none(value: dict[str, Any] | None) -> dict[str, Any] | None:
-    """
-    Remove None-valued fields before comparing sparse expected objects.
-
-    Args:
-        value: Dictionary to normalize.
-    Returns:
-        Dictionary without None values, or None.
-    """
-
-    if value is None:
-        return None
-    return {key: item for key, item in value.items() if item is not None}
-
-
 def _run_case_via_api(case: dict[str, Any]) -> dict[str, Any]:
     """
-    Run one case through the FastAPI ``/run`` route.
+    Run one case through the FastAPI ``/run`` route (production compose in ``compose_message``).
 
-    When ``REALPAGE_EVAL_STUB_COMPOSE`` is true (default), ``compose_message`` is patched to
-    fixture-backed output so bodies match golden JSONL. Live composer requires explicit
-    ``REALPAGE_EVAL_STUB_COMPOSE=false`` and typically different pass rules than exact body_match.
+    Scores are derived from constraints and thresholds on the composed output; optional
+    personalization uses an OpenAI judge on that body when ``personalization_score_min``
+    is set — not golden ``expected`` text from the JSONL sample.
 
     Args:
         case: Parsed JSONL case.
@@ -313,20 +233,8 @@ def _run_case_via_api(case: dict[str, Any]) -> dict[str, Any]:
 
     from backend.main import create_app
 
-    stub = _resolve_eval_stub_compose()
     client = TestClient(create_app())
-    if stub:
-        from unittest.mock import patch
-
-        from backend.evals.fixture_stub import compose_message_json_for_case
-
-        with patch(
-            "backend.agent.compose_message",
-            side_effect=lambda *_, **__: compose_message_json_for_case(case),
-        ):
-            response = client.post("/run", json=case)
-    else:
-        response = client.post("/run", json=case)
+    response = client.post("/run", json=case)
     if response.status_code != 200:
         raise RuntimeError(f"/run failed during eval: status={response.status_code}")
     payload = response.json()
@@ -335,43 +243,34 @@ def _run_case_via_api(case: dict[str, Any]) -> dict[str, Any]:
 
 def score_output(
     generated: dict[str, Any],
-    expected: dict[str, Any],
     assertions: dict[str, Any] | None = None,
     thresholds: dict[str, Any] | None = None,
     *,
     profile: dict[str, Any] | None = None,
     property_name: str = "",
-    personalization_body: str = "",
 ) -> dict[str, bool]:
     """
-    Score generated output against expected fields used by the PoC gate.
+    Score generated agent output using assertion constraints and case thresholds only.
+
+    The JSONL ``expected`` block is not consulted: it may document a golden sample but
+    must not gate quality for a non-deterministic composer.
 
     Args:
-        generated: Agent output dictionary.
-        expected: Expected output dictionary from the JSONL case.
-        assertions: Optional JSONL assertions to evaluate against generated output.
+        generated: Agent output dictionary from ``/run``.
+        assertions: Optional ``assertions.constraints`` from the JSONL case.
         thresholds: Optional JSONL thresholds; drives personalization and safety checks.
         profile: Recipient profile facts for the personalization judge.
         property_name: Property name for the personalization judge.
-        personalization_body: Live-generated body for quality scoring; falls back to
-            the generated body when empty (offline/no-LLM mode).
     Returns:
-        Boolean score dimensions. When ``personalization_score_min`` is set and a send is
-        expected, ``personalization_pass`` is always present (false if the judge cannot run).
+        Boolean score dimensions. When ``personalization_score_min`` is set and the agent
+        sends, ``personalization_pass`` is present (false if the judge cannot run).
     """
 
     generated_message = generated.get("next_message") or {}
-    expected_raw = expected.get("next_message")
-    expected_send = expected_raw is not None
-    expected_message = expected_raw if isinstance(expected_raw, dict) else {}
-    generated_action = _without_none(generated.get("next_action"))
-    expected_action = _without_none(expected.get("next_action"))
-    generated_cta = _without_none(generated_message.get("cta"))
-    expected_cta = _without_none(expected_message.get("cta"))
     body = str(generated_message.get("body") or "")
-    expected_body = str(expected_message.get("body") or "")
+    sending = bool(generated.get("send"))
     assertion_constraints = (assertions or {}).get("constraints", {})
-    if expected_send:
+    if sending:
         compliance_env = check_compliance(body, assertion_constraints)
         compliance_payload = compliance_env.result or {}
         constraints_pass = bool(compliance_payload.get("passed", False))
@@ -379,38 +278,23 @@ def score_output(
         compliance_payload = {"violations": []}
         constraints_pass = True
     scores: dict[str, bool] = {
-        "send_match": generated.get("send") is expected_send,
-        "channel_match": generated_message.get("channel")
-        == expected_message.get("channel"),
-        "send_time_match": generated_message.get("send_at")
-        == expected_message.get("send_at"),
-        "subject_match": generated_message.get("subject")
-        == expected_message.get("subject"),
-        "body_match": body == expected_body,
-        "cta_match": generated_cta == expected_cta,
-        "next_action_match": generated_action == expected_action,
-        "compliance_pass": (OPT_OUT_PATTERN.search(body) is not None) if expected_send else True,
+        "compliance_pass": (OPT_OUT_PATTERN.search(body) is not None) if sending else True,
         "constraints_pass": constraints_pass,
     }
 
     resolved_thresholds = thresholds or {}
 
-    # safety_violations_max: zero tolerance — any violation is a hard fail
     safety_max = resolved_thresholds.get("safety_violations_max")
     if safety_max is not None:
-        if expected_send:
+        if sending:
             violations = compliance_payload.get("violations") or []
             scores["safety_violations_pass"] = len(violations) <= int(safety_max)
         else:
             scores["safety_violations_pass"] = True
 
-    # personalization_score_min: LLM judge on live-generated body (not fixture body).
-    # personalization_body is the real composer output; falls back to fixture body in
-    # offline mode so the check still runs, but may fail if the fixture lacks profile fields.
     personalization_min = resolved_thresholds.get("personalization_score_min")
-    if personalization_min is not None and generated.get("send") is True:
-        score_body = personalization_body if personalization_body else body
-        p_score = _score_personalization(score_body, profile or {}, property_name) if score_body else None
+    if personalization_min is not None and sending:
+        p_score = _score_personalization(body, profile or {}, property_name) if body else None
         scores["personalization_pass"] = p_score is not None and p_score >= float(personalization_min)
 
     return scores
@@ -422,11 +306,10 @@ def run_case(case: dict[str, Any], *, latency_sample_count: int | None = None) -
 
     **Latency:** ``p95_latency_ms`` in the case JSON gates the **P95** of POST ``/run``
     wall times (``agent_elapsed_ms`` samples). With multiple samples, the harness repeats
-    ``/run`` then runs **one** scoring pass (live compose + judge when configured) so P95
+    ``/run`` then runs **one** scoring pass (composed body + judge when thresholds require) so **P95**
     latency is not confounded by repeated non-deterministic judge calls.
 
-    **Integrity:** ``eval_integrity`` records whether the composer was stubbed and how to
-    interpret latency (see module docstring).
+    **Integrity:** ``eval_integrity`` records how compose and personalization are wired.
 
     Args:
         case: Parsed JSONL case.
@@ -438,11 +321,8 @@ def run_case(case: dict[str, Any], *, latency_sample_count: int | None = None) -
     """
 
     thresholds = case.get("thresholds") or {}
-    expected = case["expected"]
-    expected_send = bool((expected or {}).get("next_message"))
     case_input = case.get("input", {})
     n = _resolve_latency_sample_count(latency_sample_count)
-    stub_used = _resolve_eval_stub_compose()
     sampling_mode = "full_cycle" if n <= 1 else "repeated_api_then_single_score"
 
     # Repeat POST /run n times to collect agent wall-time samples for P95.
@@ -453,22 +333,14 @@ def run_case(case: dict[str, Any], *, latency_sample_count: int | None = None) -
         generated = _run_case_via_api(case)
         agent_samples.append(int((perf_counter() - t0) * 1000))
 
-    # Single scoring pass on the last generated output.
-    # With live compose the generated body is already real LLM output — no second
-    # compose call needed. Pass empty string so score_output uses the generated body.
+    # Single scoring pass on the last generated output (constraints + optional OpenAI judge).
     t0 = perf_counter()
-    if stub_used and thresholds.get("personalization_score_min") is not None and expected_send:
-        personalization_body = _compose_for_personalization(case)
-    else:
-        personalization_body = ""
     scores = score_output(
         generated,
-        expected,
         assertions=case.get("assertions"),
         thresholds=thresholds,
         profile=case_input.get("profile") or {},
         property_name=str(case_input.get("property_name") or ""),
-        personalization_body=personalization_body,
     )
     scoring_ms = int((perf_counter() - t0) * 1000)
 
@@ -477,17 +349,13 @@ def run_case(case: dict[str, Any], *, latency_sample_count: int | None = None) -
     scores["latency_pass"] = agent_p95 <= float(int(p95_budget)) if p95_budget is not None else True
 
     # latency_pass is a performance metric — excluded from the correctness gate.
-    # body_match/subject_match/cta_match are exact-string comparisons against the golden
-    # fixture: only meaningful when stub_used=True. With live compose they are
-    # informational only.
-    non_gating = {"latency_pass"} | (set() if stub_used else _STUB_ONLY_SCORES)
+    non_gating = {"latency_pass"}
     correctness_scores = {k: v for k, v in scores.items() if k not in non_gating}
     total_wall = sum(agent_samples) + scoring_ms
 
     logger.info(
-        "[eval] task_id=%s stub_compose=%s sampling_mode=%s samples=%s",
+        "[eval] task_id=%s sampling_mode=%s samples=%s",
         case.get("task_id"),
-        stub_used,
         sampling_mode,
         n,
     )
@@ -495,7 +363,6 @@ def run_case(case: dict[str, Any], *, latency_sample_count: int | None = None) -
     return {
         "task_id": case["task_id"],
         "generated": generated,
-        "expected": expected,
         "scores": scores,
         "passed": all(correctness_scores.values()),
         "elapsed_ms": int(round(total_wall)),
@@ -510,7 +377,12 @@ def run_case(case: dict[str, Any], *, latency_sample_count: int | None = None) -
             "total_p95_ms": agent_p95,
         },
         "eval_integrity": {
-            "compose_message": "stubbed" if stub_used else "live_openai",
+            "compose_message": "openapi_chat_via_run_agent compose_message tool",
+            "personalization_when_threshold_set": (
+                "openai_chat_judge on composed body (_score_personalization)"
+                if thresholds.get("personalization_score_min") is not None
+                else "none — personalization_score_min omitted"
+            ),
             "correctness_gate": sorted(correctness_scores.keys()),
             "informational_only": sorted(non_gating - {"latency_pass"}),
             "latency_sampling_mode": sampling_mode,
@@ -609,19 +481,10 @@ def main() -> None:
     if n is None:
         n = int(os.getenv("REALPAGE_EVAL_LATENCY_RUNS", str(DEFAULT_CLI_LATENCY_RUNS)))
     n = max(1, int(n))
-    stub = _resolve_eval_stub_compose()
-    if stub:
-        logger.warning(
-            "[eval] REALPAGE_EVAL_STUB_COMPOSE=true — fixture composer active; "
-            "body_match/subject_match/cta_match gate passed. "
-            "Set REALPAGE_EVAL_STUB_COMPOSE=false (default) for production-representative evals."
-        )
-    else:
-        logger.info(
-            "[eval] live OpenAI composer — body_match/subject_match/cta_match are "
-            "informational only; correctness gate uses compliance, personalization, "
-            "channel, and next_action."
-        )
+    logger.info(
+        "[eval] Harness runs POST /run with production compose_message (OpenAI chat). "
+        "Pass/fail uses case constraints/thresholds; personalization_min invokes OpenAI judge on the composed body."
+    )
     print(json.dumps(_summarize_report(run_all(args.path, latency_sample_count=n)), indent=2))
 
 

@@ -24,6 +24,7 @@ BRAND_STYLE_GUIDE = """
 - One clear CTA per message.
 - SMS: short, conversational, with numbered reply options when useful.
 - Email: brief subject, 2-3 sentences.
+- Voice: concise spoken script for TTS or real-time AI call; no URLs, markdown, or special formatting; use numbered options identical to SMS format (e.g. "1. Book a tour") — the caller presses the number on the phone keypad.
 - Always end with opt-out instruction.
 - Never use: "pursuant to", "as per", "please be advised".
 """

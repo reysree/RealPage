@@ -1,0 +1,19 @@
+{
+  "send": true,
+  "decision_reason": "Email is the first preference, but email_opt_in is false, so the agent selects SMS.",
+  "next_message": {
+    "channel": "sms",
+    "send_at": "2025-12-11T09:00:00-08:00",
+    "subject": null,
+    "body": "SMS outreach references Jordan and Oak Ridge Apartments, then ends with Reply STOP to opt out.",
+    "cta": {
+      "type": "schedule_tour",
+      "options": ["1. Book a tour"]
+    }
+  },
+  "next_action": {
+    "type": "follow_up_in_days",
+    "name": null,
+    "value": 6
+  }
+}

@@ -1,5 +1,16 @@
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'
 
+function jsonBodyFromResponseText(text) {
+  if (!text) {
+    return null
+  }
+  try {
+    return JSON.parse(text)
+  } catch {
+    return { raw: text }
+  }
+}
+
 export async function getBackendHealth() {
   const response = await fetch(`${API_BASE_URL}/health`)
 
@@ -17,11 +28,24 @@ export async function runCase(caseData) {
     body: JSON.stringify(caseData),
   })
 
+  const text = await response.text()
+  const parsed = jsonBodyFromResponseText(text)
+
   if (!response.ok) {
-    throw new Error(`Run failed with ${response.status}`)
+    const body = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+    const message =
+      typeof body.message === 'string' && body.message.trim()
+        ? body.message.trim()
+        : 'Run failed.'
+    const err = new Error('Run failed')
+    err.runFailedBody = {
+      error: typeof body.error === 'string' && body.error.trim() ? body.error.trim() : 'Run failed',
+      message,
+    }
+    throw err
   }
 
-  return response.json()
+  return parsed
 }
 
 export async function runAll(cases) {

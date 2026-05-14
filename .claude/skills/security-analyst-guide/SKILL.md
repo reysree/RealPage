@@ -1,5 +1,5 @@
 # Security Analyst Skill
-# RealPage Lumina — AI Property Management Platform
+# Context-Aware Message Sending Bot
 
 ## Purpose
 

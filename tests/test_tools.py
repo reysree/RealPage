@@ -11,13 +11,45 @@ from pydantic import ValidationError
 
 from backend.schemas import ToolResultEnvelope
 from backend.schemas import ComposerLlmOutput, FairHousingJudgeLlmOutput
+from backend.schemas.models import RunRequest, ThresholdsRecord
 from backend.tools import ALL_TOOLS
 from backend.tools.channel_selector import select_channel
 from backend.tools.compliance import check_compliance
 from backend.tools.consent import check_consent
 from backend.tools.input_security import check_input_security
-from backend.tools.message_composer import compose_message
+import backend.tools.message_composer as message_composer
+from backend.tools.message_composer import _suffix_applies_to_channel, compose_message
 from backend.tools.timing import determine_send_time
+
+# Minimal valid case dict reused across schema-level tests.
+_MINIMAL_CASE: dict = {
+    "task_id": "schema_test",
+    "persona": "prospect",
+    "lifecycle_stage": "new",
+    "consent": {"email_opt_in": True, "sms_opt_in": True, "voice_opt_in": False},
+    "channel_preferences": ["sms"],
+    "input": {
+        "property_name": "Oak Ridge Apartments",
+        "move_date_target": "2026-02-15",
+        "last_interaction": "2025-12-06T11:30:00Z",
+        "timezone": "America/Chicago",
+        "language": "en",
+        "profile": {"first_name": "Taylor"},
+    },
+    "assertions": {
+        "required_states": [
+            "consent_verified",
+            "fair_housing_check_passed",
+            "brand_style_applied",
+        ],
+        "constraints": {
+            "no_pii_leak": True,
+            "include_opt_out_instructions": True,
+            "primary_cta": "book_tour",
+            "compliance_suffix": "Reply STOP to opt out.",
+        },
+    },
+}
 
 
 def parse_tool_result(result: ToolResultEnvelope) -> dict:
@@ -248,13 +280,245 @@ def test_composer_returns_error_when_api_key_missing(monkeypatch) -> None:
     )
     result = parse_tool_result(raw)
     assert result["result"] is None
-    assert result["error_code"] == "COMPOSER_NO_API_KEY"
+    assert result["error_code"] == "OPENAI_API_KEY_MISSING"
 
 
-@patch("backend.tools.message_composer.time.sleep")
-def test_composer_retries_openai_then_succeeds(mock_sleep, monkeypatch) -> None:
+def test_composer_fast_path_bypasses_openai_for_common_sms_case(monkeypatch) -> None:
     """
-    Verify backoff retries execute before accepting a recovered LLM payload.
+    Verify the opt-in deterministic fast path can produce common SMS output without OpenAI.
+    """
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("REALPAGE_COMPOSER_FAST_PATH", "1")
+
+    raw = compose_message(
+        channel="sms",
+        persona="prospect",
+        lifecycle_stage="new",
+        profile={"first_name": "Taylor", "city_interest": "Richardson, TX"},
+        property_name="Oak Ridge Apartments",
+        primary_cta="book_tour",
+        constraints={
+            "include_opt_out_instructions": True,
+            "compliance_suffix": "Reply STOP to opt out.",
+        },
+    )
+
+    result = parse_tool_result(raw)
+    assert result["error"] is None
+    assert result["result"]["subject"] is None
+    assert "Taylor" in result["result"]["body"]
+    assert "Richardson, TX" in result["result"]["body"]
+    assert "Reply STOP to opt out." in result["result"]["body"]
+    assert result["result"]["message_reason"] == "deterministic_fast_path_common_outreach"
+
+
+def test_composer_fast_path_falls_back_for_brand_notes_without_api_key(monkeypatch) -> None:
+    """
+    Verify complex brand-note cases still require the LLM composer path.
+    """
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("REALPAGE_COMPOSER_FAST_PATH", "1")
+
+    raw = compose_message(
+        channel="sms",
+        persona="prospect",
+        lifecycle_stage="new",
+        profile={"first_name": "Taylor"},
+        property_name="Oak Ridge Apartments",
+        primary_cta="book_tour",
+        constraints={
+            "include_opt_out_instructions": True,
+            "compliance_suffix": "Reply STOP to opt out.",
+            "brand_style_notes": "Use a special campaign voice.",
+        },
+    )
+
+    result = parse_tool_result(raw)
+    assert result["result"] is None
+    assert result["error_code"] == "OPENAI_API_KEY_MISSING"
+
+
+def test_openai_composer_uses_latency_tuning_environment(monkeypatch) -> None:
+    """
+    Verify optimized benchmark knobs flow into the OpenAI request.
+    """
+
+    class _FakeCompletions:
+        """
+        Minimal fake OpenAI completions resource that records create() kwargs.
+        """
+
+        def __init__(self) -> None:
+            self.kwargs = {}
+
+        def create(self, **kwargs):
+            """
+            Return a minimal chat completion shape.
+            """
+
+            self.kwargs = kwargs
+            message = type(
+                "Message",
+                (),
+                {
+                    "content": (
+                        '{"subject": null, "body": "Hi Taylor. Reply STOP to opt out.", '
+                        '"cta": {"type": "schedule_tour"}, "message_reason": "test"}'
+                    )
+                },
+            )
+            choice = type("Choice", (), {"message": message, "finish_reason": "stop"})
+            return type("Response", (), {"choices": [choice]})
+
+    class _FakeOpenAI:
+        """
+        Minimal fake OpenAI client.
+        """
+
+        def __init__(self) -> None:
+            self.completions = _FakeCompletions()
+            self.chat = type("Chat", (), {"completions": self.completions})
+
+    fake_client = _FakeOpenAI()
+    monkeypatch.setenv("REALPAGE_COMPOSER_MODEL", "gpt-4o-mini")
+    monkeypatch.setenv("REALPAGE_COMPOSER_TEMPERATURE", "0")
+    monkeypatch.setenv("REALPAGE_COMPOSER_MAX_TOKENS", "220")
+
+    with patch("openai.OpenAI", return_value=fake_client):
+        payload = message_composer._call_openai_composer_once(
+            channel="sms",
+            persona="prospect",
+            lifecycle_stage="new",
+            profile={"first_name": "Taylor"},
+            property_name="Oak Ridge Apartments",
+            primary_cta="book_tour",
+            constraints={},
+            consent_verification={"eligible": True},
+        )
+
+    assert payload["body"] == "Hi Taylor. Reply STOP to opt out."
+    assert fake_client.completions.kwargs["model"] == "gpt-4o-mini"
+    assert fake_client.completions.kwargs["temperature"] == 0.0
+    assert fake_client.completions.kwargs["max_completion_tokens"] == 220
+
+
+def test_openai_composer_uses_dynamic_max_completion_tokens_by_channel(monkeypatch) -> None:
+    """
+    Verify default token caps are high enough by channel without manual overrides.
+    """
+
+    class _FakeCompletions:
+        """
+        Minimal fake OpenAI completions resource.
+        """
+
+        def __init__(self) -> None:
+            self.kwargs = {}
+
+        def create(self, **kwargs):
+            """
+            Return a valid email completion.
+            """
+
+            self.kwargs = kwargs
+            message = type(
+                "Message",
+                (),
+                {
+                    "content": (
+                        '{"subject": "Tour Oak Ridge", '
+                        '"body": "Hi Taylor, tour Oak Ridge. Reply STOP to opt out.", '
+                        '"cta": {"type": "book_tour", "link": "https://oakridge.example/tour"}, '
+                        '"message_reason": "test"}'
+                    )
+                },
+            )
+            choice = type("Choice", (), {"message": message, "finish_reason": "stop"})
+            return type("Response", (), {"choices": [choice]})
+
+    class _FakeOpenAI:
+        """
+        Minimal fake OpenAI client.
+        """
+
+        def __init__(self) -> None:
+            self.completions = _FakeCompletions()
+            self.chat = type("Chat", (), {"completions": self.completions})
+
+    fake_client = _FakeOpenAI()
+    monkeypatch.delenv("REALPAGE_COMPOSER_MAX_TOKENS", raising=False)
+
+    with patch("openai.OpenAI", return_value=fake_client):
+        payload = message_composer._call_openai_composer_once(
+            channel="email",
+            persona="prospect",
+            lifecycle_stage="open",
+            profile={"first_name": "Taylor", "amenity_interest": ["pool"]},
+            property_name="Oak Ridge Apartments",
+            primary_cta="book_tour",
+            constraints={"allowed_link_domains": ["oakridge.example"]},
+            consent_verification={"eligible": True},
+        )
+
+    assert payload["subject"] == "Tour Oak Ridge"
+    assert fake_client.completions.kwargs["max_completion_tokens"] == 300
+
+
+def test_openai_composer_rejects_truncated_completion(monkeypatch) -> None:
+    """
+    Verify finish_reason=length is treated as truncation and never accepted.
+    """
+
+    class _FakeCompletions:
+        """
+        Fake OpenAI resource that simulates a token-limit stop.
+        """
+
+        def create(self, **_kwargs):
+            """
+            Return syntactically valid JSON with a length finish reason.
+            """
+
+            message = type(
+                "Message",
+                (),
+                {
+                    "content": (
+                        '{"subject": null, "body": "Hi Taylor.", '
+                        '"cta": {"type": "schedule_tour"}, "message_reason": "cut"}'
+                    )
+                },
+            )
+            choice = type("Choice", (), {"message": message, "finish_reason": "length"})
+            return type("Response", (), {"choices": [choice]})
+
+    class _FakeOpenAI:
+        """
+        Minimal fake OpenAI client.
+        """
+
+        def __init__(self) -> None:
+            self.chat = type("Chat", (), {"completions": _FakeCompletions()})
+
+    with patch("openai.OpenAI", return_value=_FakeOpenAI()):
+        with pytest.raises(ValueError, match="truncated"):
+            message_composer._call_openai_composer_once(
+                channel="sms",
+                persona="prospect",
+                lifecycle_stage="new",
+                profile={"first_name": "Taylor"},
+                property_name="Oak Ridge Apartments",
+                primary_cta="book_tour",
+                constraints={},
+                consent_verification={"eligible": True},
+            )
+
+
+def test_composer_retries_openai_then_succeeds(monkeypatch) -> None:
+    """
+    Verify immediate retries execute before accepting a recovered LLM payload.
     """
 
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test-key")
@@ -288,9 +552,6 @@ def test_composer_retries_openai_then_succeeds(mock_sleep, monkeypatch) -> None:
     parsed = parse_tool_result(raw)
     assert parsed["error"] is None
     assert parsed["result"]["cta"]["type"] == "schedule_tour"
-    assert mock_sleep.call_count == 2
-    mock_sleep.assert_any_call(1)
-    mock_sleep.assert_any_call(2)
 
 
 def test_composer_appends_case_compliance_suffix(monkeypatch) -> None:
@@ -331,8 +592,7 @@ def test_composer_appends_case_compliance_suffix(monkeypatch) -> None:
     )
 
 
-@patch("backend.tools.message_composer.time.sleep")
-def test_composer_rejects_blank_required_fields(mock_sleep, monkeypatch) -> None:
+def test_composer_rejects_blank_required_fields(monkeypatch) -> None:
     """
     Verify whitespace-only body fails Pydantic validation and surfaces as tool error.
     """
@@ -364,8 +624,7 @@ def test_composer_rejects_blank_required_fields(mock_sleep, monkeypatch) -> None
     assert result["error_code"] == "COMPOSER_LLM_RETRY_EXHAUSTED"
 
 
-@patch("backend.tools.message_composer.time.sleep")
-def test_composer_requires_email_subject(mock_sleep, monkeypatch) -> None:
+def test_composer_requires_email_subject(monkeypatch) -> None:
     """
     Verify email channel rejects missing or blank subject after LLM response.
     """
@@ -545,3 +804,215 @@ def test_fair_housing_judge_llm_schema_strict_boolean_only() -> None:
             {"passed": True, "rationale": "no"},
             strict=True,
         )
+
+
+# ── ThresholdsRecord optional fields ─────────────────────────────────────────
+
+
+def test_thresholds_record_accepts_empty_dict() -> None:
+    """
+    Verify ThresholdsRecord validates {} with all fields defaulting to None.
+    """
+
+    t = ThresholdsRecord.model_validate({})
+
+    assert t.p95_latency_ms is None
+    assert t.personalization_score_min is None
+    assert t.safety_violations_max is None
+    assert t.reply_classification_f1_min is None
+
+
+def test_thresholds_record_accepts_full_eval_values() -> None:
+    """
+    Verify full threshold values still validate correctly after making fields optional.
+    """
+
+    t = ThresholdsRecord.model_validate(
+        {"p95_latency_ms": 2000, "personalization_score_min": 0.8, "safety_violations_max": 0}
+    )
+
+    assert t.p95_latency_ms == 2000
+    assert t.personalization_score_min == 0.8
+    assert t.safety_violations_max == 0
+
+
+def test_thresholds_record_rejects_boolean_for_numeric_fields() -> None:
+    """
+    Verify boolean values are rejected for integer threshold fields.
+    """
+
+    with pytest.raises(ValidationError):
+        ThresholdsRecord.model_validate({"p95_latency_ms": True})
+
+
+def test_run_request_schema_accepts_empty_thresholds_and_expected() -> None:
+    """
+    Verify RunRequest accepts {} for both eval-only fields without a validation error.
+    """
+
+    r = RunRequest.model_validate({**_MINIMAL_CASE, "thresholds": {}, "expected": {}})
+
+    assert r.thresholds is not None
+    assert r.thresholds.p95_latency_ms is None
+    assert r.expected is not None
+    assert r.expected.next_message is None
+
+
+def test_run_request_schema_accepts_omitted_thresholds_and_expected() -> None:
+    """
+    Verify RunRequest accepts a payload where thresholds and expected are absent.
+    """
+
+    r = RunRequest.model_validate(_MINIMAL_CASE)
+
+    assert r.thresholds is None
+    assert r.expected is None
+
+
+# ── Compliance suffix channel filtering ───────────────────────────────────────
+
+
+def test_suffix_blocked_for_email_specific_text_on_sms() -> None:
+    """
+    Verify an email-specific compliance suffix is not applied to an SMS body.
+    """
+
+    assert _suffix_applies_to_channel(
+        "To opt out of emails, click here or reply STOP to opt out.", "sms"
+    ) is False
+
+
+def test_suffix_blocked_for_email_specific_text_on_voice() -> None:
+    """
+    Verify an email-specific compliance suffix is not applied to a voice body.
+    """
+
+    assert _suffix_applies_to_channel(
+        "To opt out of emails, click here or reply STOP to opt out.", "voice"
+    ) is False
+
+
+def test_suffix_blocked_for_unsubscribe_text_on_sms() -> None:
+    """
+    Verify a suffix containing 'unsubscribe' is treated as email-specific and skipped for SMS.
+    """
+
+    assert _suffix_applies_to_channel("Click here to unsubscribe.", "sms") is False
+
+
+def test_suffix_allowed_for_generic_text_on_sms() -> None:
+    """
+    Verify a generic opt-out suffix is applied to SMS and voice.
+    """
+
+    assert _suffix_applies_to_channel("Reply STOP to opt out.", "sms") is True
+    assert _suffix_applies_to_channel("Reply STOP to opt out.", "voice") is True
+
+
+def test_suffix_always_allowed_for_email() -> None:
+    """
+    Verify any suffix is allowed on email regardless of content.
+    """
+
+    assert _suffix_applies_to_channel(
+        "To opt out of emails, click here or reply STOP to opt out.", "email"
+    ) is True
+
+
+# ── Voice and SMS CTA link validation ────────────────────────────────────────
+
+
+def test_composer_cta_link_rejected_for_sms() -> None:
+    """
+    Verify CTA link must be null for sms — schema validation enforces it.
+    """
+
+    payload = {
+        "subject": None,
+        "body": "Hi Taylor, book a tour. Reply STOP to opt out.",
+        "cta": {"type": "schedule_tour", "link": "https://oakridge.example/tour"},
+        "message_reason": "test",
+    }
+
+    with pytest.raises(ValidationError):
+        ComposerLlmOutput.model_validate(payload, strict=True, context={"channel": "sms"})
+
+
+def test_composer_cta_link_rejected_for_voice() -> None:
+    """
+    Verify CTA link must be null for voice — voice is phone-keypad only.
+    """
+
+    payload = {
+        "subject": None,
+        "body": "Hi Taylor, press 1 to book a tour. Press 2 to skip.",
+        "cta": {"type": "schedule_tour", "link": "https://oakridge.example/tour"},
+        "message_reason": "test",
+    }
+
+    with pytest.raises(ValidationError):
+        ComposerLlmOutput.model_validate(payload, strict=True, context={"channel": "voice"})
+
+
+def test_composer_cta_link_allowed_for_email() -> None:
+    """
+    Verify CTA link is accepted for email channel.
+    """
+
+    payload = {
+        "subject": "Tour Oak Ridge",
+        "body": "Hi Taylor, book a tour this week.",
+        "cta": {"type": "schedule_tour", "link": "https://oakridge.example/tour"},
+        "message_reason": "test",
+    }
+
+    result = ComposerLlmOutput.model_validate(payload, strict=True, context={"channel": "email"})
+
+    assert result.cta.link == "https://oakridge.example/tour"
+
+
+def test_composer_voice_subject_must_be_null() -> None:
+    """
+    Verify voice channel rejects a non-null subject (same rule as SMS).
+    """
+
+    payload = {
+        "subject": "Tour Oak Ridge",
+        "body": "Hi Taylor, press 1 to book.",
+        "cta": {"type": "schedule_tour", "options": ["1. Yes", "2. No"]},
+        "message_reason": "test",
+    }
+
+    with pytest.raises(ValidationError):
+        ComposerLlmOutput.model_validate(payload, strict=True, context={"channel": "voice"})
+
+
+def test_channel_selector_handles_empty_preferences() -> None:
+    """
+    Verify behavior when channel_preferences is [].
+    """
+    result = parse_tool_result(
+        select_channel([], {"sms_opt_in": True, "email_opt_in": True})
+    )
+    assert result["result"]["send"] is False
+
+
+@pytest.mark.parametrize("tz,expected_hour", [
+    ("America/New_York", "09"),
+    ("America/Los_Angeles", "09"),
+    ("Europe/London", "09"),
+    ("Asia/Tokyo", "09"),
+    ("Australia/Sydney", "09"),
+    ("UTC", "09"),
+])
+def test_send_time_correct_in_recipient_timezone(tz: str, expected_hour: str) -> None:
+    """
+    Verify next-day 9am in recipient timezone across major zones.
+    """
+    result = parse_tool_result(
+        determine_send_time(tz, "2025-12-08T15:04:00Z", "new")
+    )
+    send_at = result["result"]["send_at"]
+    # Extract hour from ISO8601 timestamp (format: YYYY-MM-DDTHH:MM:SS±HH:MM)
+    hour = send_at.split("T")[1][:2]
+    assert hour == expected_hour

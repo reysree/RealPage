@@ -1,5 +1,5 @@
 # OpenAI Agents SDK Skill
-# RealPage Lumina — AI Property Management Platform
+# Context-Aware Message Sending Bot
 
 ## Purpose
 
@@ -30,7 +30,7 @@ State lives in the message history passed to Runner.run().
 from agents import Agent
 
 agent = Agent(
-    name="Lumina Leasing Agent",
+    name="Outreach Agent",
     instructions="You are a property management assistant...",
     model="gpt-4o",           # always gpt-4o for this project
     tools=[tool_1, tool_2],   # list of @function_tool decorated functions
@@ -115,7 +115,7 @@ def search_knowledge_base(query: str) -> str:
 
 Rules for function_tool:
 - Parameter types must be serializable: str, int, float, bool, list, dict
-- **Return type must be `str`** at the decorator boundary — build a **`ToolResultEnvelope`** in RealPage Lumina (`backend.schemas`) and return **`model_dump_json(exclude_none=True)`**. Generic SDK samples may use plain `json.dumps` if the serialized shape matches `{error?, error_code?, result?}`.
+- **Return type must be `str`** at the decorator boundary — build a **`ToolResultEnvelope`** in this project (`backend.schemas`) and return **`model_dump_json(exclude_none=True)`**. Generic SDK samples may use plain `json.dumps` if the serialized shape matches `{error?, error_code?, result?}`.
 - Docstring fields are required: TOOL, Purpose, When called, Returns, Note
 - `When called` must name the specific user intent that triggers this tool — not a restatement of Purpose
 - `Returns` must show the actual JSON shape with field names and types — not prose
@@ -213,7 +213,7 @@ maintenance_agent = Agent(
 )
 
 orchestrator = Agent(
-    name="Lumina Orchestrator",
+    name="Outreach Orchestrator",
     instructions="""
     Route the user to the correct specialist:
     - Leasing questions → Leasing Specialist
@@ -273,7 +273,7 @@ async def fair_housing_guardrail(
 
 # Apply to agent
 agent = Agent(
-    name="Lumina Agent",
+    name="Outreach Agent",
     instructions=SYSTEM_PROMPT,
     tools=[...],
     input_guardrails=[fair_housing_guardrail],
@@ -328,7 +328,7 @@ For production observability, integrate with LangSmith:
 ```python
 # Set environment variables
 # LANGSMITH_API_KEY=...
-# LANGSMITH_PROJECT=lumina-agent
+# LANGSMITH_PROJECT=outreach-agent
 
 # The SDK emits OpenTelemetry-compatible traces
 # LangSmith picks these up automatically with the right configuration
@@ -379,7 +379,7 @@ Anti-patterns in system prompts:
 "Be helpful and answer questions about properties."
 
 # Good — specific
-"You are a leasing assistant for RealPage Lumina. You help users find available
+"You are an outreach assistant for the Context-Aware Message Sending Bot. You help users find available
 units, understand pricing, and learn about lease terms.
 
 ALWAYS call search_knowledge_base before answering any factual question.

@@ -4,6 +4,33 @@ Purpose: FastAPI application entry point with CORS and health checks.
 Author: Sreeram
 """
 
+from pathlib import Path
+from typing import Any, Mapping
+
+_BACKEND_ROOT = Path(__file__).resolve().parent
+
+
+def _load_backend_dotenv() -> None:
+    """
+    Populate ``os.environ`` from ``.env`` files before tools call ``os.getenv``.
+
+    Uvicorn is typically started from the repo root, so a bare ``env_file=".env"``
+    resolves to the wrong directory. Loads ``backend/.env`` first, then repo-root
+    ``.env``, without overriding variables already set in the shell.
+    """
+
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        return
+    repo_root = _BACKEND_ROOT.parent
+    for path in (_BACKEND_ROOT / ".env", repo_root / ".env"):
+        if path.is_file():
+            load_dotenv(path, override=False)
+
+
+_load_backend_dotenv()
+
 import logging
 from functools import lru_cache
 from time import perf_counter
@@ -20,13 +47,103 @@ from backend.schemas import AgentOutput, HealthResponse, RunRequest, RunResponse
 logger = logging.getLogger(__name__)
 
 
+def _validation_errors_for_log(errors: list[Any]) -> list[dict[str, Any]]:
+    """
+    Drop submitted values from validation errors before logging.
+
+    Args:
+        errors: Raw Pydantic/FastAPI validation error dicts.
+    Returns:
+        Same structures without ``input`` payloads (may contain PII).
+    """
+
+    cleaned: list[dict[str, Any]] = []
+    for item in errors:
+        if isinstance(item, Mapping):
+            cleaned.append({k: v for k, v in dict(item).items() if k != "input"})
+    return cleaned
+
+
+def _field_display_path(loc: tuple[Any, ...] | list[Any]) -> str:
+    """
+    Build a dotted path for client-facing messages (omit HTTP ``body`` wrapper).
+
+    Args:
+        loc: Error location tuple from validation metadata.
+    Returns:
+        Dot-separated field path such as ``input.property_name``.
+    """
+
+    skip_roots = {"body", "query", "path", "header"}
+    parts: list[str] = []
+    for segment in loc:
+        if segment in skip_roots and not parts:
+            continue
+        parts.append(str(segment))
+    return ".".join(parts) if parts else "request"
+
+
+def _humanize_validation_errors(errors: list[Any]) -> str:
+    """
+    Turn validation metadata into short user-facing sentences (no error codes).
+
+    Args:
+        errors: Raw validation error list from ``RequestValidationError``.
+    Returns:
+        Single human-readable summary suitable for API JSON responses.
+    """
+
+    messages: list[str] = []
+    for item in errors:
+        if not isinstance(item, Mapping):
+            continue
+        loc = item.get("loc") or ()
+        field = _field_display_path(tuple(loc))
+        typ = str(item.get("type") or "")
+        if typ == "missing":
+            messages.append(f"Required field missing: {field}.")
+            continue
+        if typ == "extra_forbidden":
+            messages.append(f"Unexpected field: {field}.")
+            continue
+        if typ.endswith("_type") or typ in {"bool_parsing", "int_parsing", "float_parsing"}:
+            messages.append(f"Invalid type for {field}.")
+            continue
+        if typ.startswith("value_error"):
+            messages.append(f"Invalid value for {field}.")
+            continue
+        messages.append(f"Invalid input for {field}.")
+    joined = " ".join(messages).strip()
+    return joined if joined else "Invalid request."
+
+
+def _http_detail_message(detail: Any) -> str:
+    """
+    Normalize HTTPException detail to a single string for responses.
+
+    Args:
+        detail: Starlette/FastAPI ``HTTPException.detail`` payload.
+    Returns:
+        Plain-language message without structured error codes.
+    """
+
+    if isinstance(detail, str):
+        return detail
+    return "Request could not be processed."
+
+
 class Settings(BaseSettings):
     """
     Runtime configuration for the backend application.
     """
 
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
-    model_config = SettingsConfigDict(env_prefix="REALPAGE_", env_file=".env")
+    model_config = SettingsConfigDict(
+        env_prefix="REALPAGE_",
+        env_file=_BACKEND_ROOT / ".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
 
 @lru_cache
@@ -54,7 +171,7 @@ def create_app() -> FastAPI:
         origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()
     ]
 
-    app = FastAPI(title="RealPage Lumina API")
+    app = FastAPI(title="Context-Aware Message Sending Bot API")
     app.add_middleware(
         CORSMiddleware,
         allow_origins=allowed_origins,
@@ -69,24 +186,59 @@ def create_app() -> FastAPI:
         exc: RequestValidationError,
     ) -> JSONResponse:
         """
-        Return validation errors without echoing submitted input values.
+        Log structured validation failures; return only plain-language messages.
 
         Args:
             request: Incoming request that failed validation.
             exc: FastAPI request validation exception.
         Returns:
-            JSONResponse: Sanitized validation details.
+            JSONResponse with generic ``error`` and human ``message`` only.
         """
 
-        sanitized_errors = [
-            {
-                "loc": error.get("loc", []),
-                "msg": error.get("msg", "Invalid input"),
-                "type": error.get("type", "validation_error"),
-            }
-            for error in exc.errors()
-        ]
-        return JSONResponse(status_code=422, content={"detail": sanitized_errors})
+        logger.warning(
+            "request_validation_failed path=%s errors=%s",
+            request.url.path,
+            _validation_errors_for_log(exc.errors()),
+        )
+        message = _humanize_validation_errors(exc.errors())
+        return JSONResponse(
+            status_code=422,
+            content={
+                "error": "Run failed",
+                "message": message,
+            },
+        )
+
+    @app.exception_handler(HTTPException)
+    async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+        """
+        Normalize HTTP errors to the same minimal JSON shape as validation failures.
+
+        Args:
+            request: Incoming request (unused; signature required by FastAPI).
+            exc: Raised HTTP exception.
+        Returns:
+            JSONResponse with ``error`` and ``message`` only.
+        """
+
+        if exc.status_code >= 500:
+            logger.error(
+                "http_server_error path=%s status=%s detail=%s",
+                request.url.path,
+                exc.status_code,
+                exc.detail,
+            )
+            client_message = "Run failed."
+        else:
+            client_message = _http_detail_message(exc.detail)
+
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={
+                "error": "Run failed",
+                "message": client_message,
+            },
+        )
 
     @app.get("/health", response_model=HealthResponse)
     async def health_check() -> HealthResponse:

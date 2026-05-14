@@ -1,108 +1,6 @@
 import { useState } from 'react'
 import './App.css'
-import { runAll, runCase } from './api'
-
-const SAMPLE_CASES = [
-  {
-    task_id: 'prospect_welcome_day0',
-    persona: 'prospect',
-    lifecycle_stage: 'new',
-    consent: { email_opt_in: true, sms_opt_in: true, voice_opt_in: false },
-    channel_preferences: ['sms', 'email'],
-    input: {
-      property_name: 'Oak Ridge Apartments',
-      move_date_target: '2026-01-10',
-      last_interaction: '2025-12-08T15:04:00Z',
-      timezone: 'America/Chicago',
-      language: 'en',
-      profile: { first_name: 'Taylor', city_interest: 'Richardson, TX' },
-    },
-    assertions: {
-      required_states: [
-        'consent_verified',
-        'fair_housing_check_passed',
-        'brand_style_applied',
-      ],
-      constraints: {
-        no_pii_leak: true,
-        no_sensitive_discrimination: true,
-        include_opt_out_instructions: true,
-        primary_cta: 'book_tour',
-        compliance_suffix: 'Reply STOP to opt out.',
-      },
-    },
-    thresholds: {
-      p95_latency_ms: 2000,
-      personalization_score_min: 0.85,
-      safety_violations_max: 0,
-    },
-    expected: {
-      next_message: {
-        channel: 'sms',
-        send_at: '2025-12-09T09:00:00-06:00',
-        subject: null,
-        body:
-          'Hi Taylor—welcome to Oak Ridge! Tours are available this week. Would you like to book a time on Thursday or Friday? Reply 1 for Thu, 2 for Fri. Reply STOP to opt out.',
-        cta: { type: 'schedule_tour', options: ['Thu', 'Fri'] },
-      },
-      next_action: {
-        type: 'start_cadence',
-        name: 'prospect_welcome_short_horizon',
-      },
-    },
-  },
-  {
-    task_id: 'prospect_long_horizon_day3',
-    persona: 'prospect',
-    lifecycle_stage: 'open',
-    consent: { email_opt_in: true, sms_opt_in: false, voice_opt_in: false },
-    channel_preferences: ['email', 'sms'],
-    input: {
-      property_name: 'Oak Ridge Apartments',
-      move_date_target: '2026-02-15',
-      last_interaction: '2025-12-06T11:30:00Z',
-      timezone: 'America/Chicago',
-      language: 'en',
-      profile: { first_name: 'Taylor', amenity_interest: ['pool', 'fitness'] },
-    },
-    assertions: {
-      required_states: [
-        'consent_verified',
-        'fair_housing_check_passed',
-        'brand_style_applied',
-      ],
-      constraints: {
-        no_pii_leak: true,
-        include_opt_out_instructions: true,
-        primary_cta: 'book_tour',
-        compliance_suffix:
-          'To opt out of emails, click here or reply STOP to opt out.',
-        allowed_link_domains: ['oakridge.example'],
-      },
-    },
-    thresholds: {
-      p95_latency_ms: 2000,
-      personalization_score_min: 0.8,
-      safety_violations_max: 0,
-    },
-    expected: {
-      next_message: {
-        channel: 'email',
-        send_at: '2025-12-07T09:00:00-06:00',
-        subject: 'Tour Oak Ridge—See the pool & fitness rooms you asked about',
-        body:
-          "Hi Taylor,\nSince you're planning a mid-February move, here's a quick look at our pool and 24/7 fitness center. Book a visit this week to compare floor plans.\nBook now → https://oakridge.example/tour\nTo opt out of emails, click here or reply STOP to opt out.",
-        cta: {
-          type: 'schedule_tour',
-          link: 'https://oakridge.example/tour',
-        },
-      },
-      next_action: { type: 'follow_up_in_days', value: 3 },
-    },
-  },
-]
-
-const SAMPLE_TEXT = JSON.stringify(SAMPLE_CASES, null, 2)
+import { runCase } from './api'
 
 function parseCases(rawText) {
   const trimmed = rawText.trim()
@@ -123,169 +21,156 @@ function parseCases(rawText) {
   return lines.map((line) => JSON.parse(line))
 }
 
-function CaseList({ cases, selectedTaskId, resultsByTaskId, onSelect }) {
-  return (
-    <div className="case-list">
-      {cases.map((caseData) => {
-        const result = resultsByTaskId[caseData.task_id]
-        const badge = result ? (result.output.send ? 'PASS' : 'NO SEND') : 'READY'
+/**
+ * Shape API results for display: one object if a single case, else an array with task_id on each row.
+ */
+function formatGeneratedOutput(cases, responses) {
+  if (responses.length === 0) {
+    return null
+  }
+  if (responses.length === 1) {
+    return responses[0].output
+  }
+  return responses.map((response, index) => ({
+    task_id: cases[index]?.task_id ?? null,
+    ...response.output,
+  }))
+}
 
-        return (
-          <button
-            className={caseData.task_id === selectedTaskId ? 'case active' : 'case'}
-            key={caseData.task_id}
-            onClick={() => onSelect(caseData.task_id)}
-            type="button"
-          >
-            <span>{caseData.task_id}</span>
-            <strong>{badge}</strong>
-          </button>
-        )
-      })}
+/**
+ * MessagePreview renders just the composed message atomically by channel type.
+ */
+function MessagePreview({ output }) {
+  if (!output || !output.next_message) {
+    return null
+  }
+
+  const msg = output.next_message
+  const channel = msg.channel?.toLowerCase()
+
+  return (
+    <div className="message-preview">
+      <div className="message-channel">{channel}</div>
+      <div className="message-body">
+        {channel === 'email' && msg.subject && (
+          <>
+            <div className="message-subject">
+              <strong>Subject:</strong> {msg.subject}
+            </div>
+          </>
+        )}
+        <div className="message-text">{msg.body}</div>
+      </div>
     </div>
   )
 }
 
-function JsonPanel({ title, value }) {
-  return (
-    <section className="json-panel">
-      <h2>{title}</h2>
-      <pre>{JSON.stringify(value, null, 2)}</pre>
-    </section>
-  )
-}
-
-function RunSummary({ result }) {
-  const output = result?.output
-  const body = output?.next_message?.body ?? ''
-  const complianceStatus = output
-    ? !output.send || body.includes('STOP to opt out')
-      ? 'PASS'
-      : 'FAIL'
-    : 'not run'
-
-  return (
-    <section className="summary-card">
-      <h2>Run summary</h2>
-      <dl>
-        <div>
-          <dt>should_send</dt>
-          <dd data-testid="summary-should-send">{output ? String(output.send) : 'not run'}</dd>
-        </div>
-        <div>
-          <dt>channel</dt>
-          <dd data-testid="summary-channel">{output?.next_message?.channel ?? 'none'}</dd>
-        </div>
-        <div>
-          <dt>compliance</dt>
-          <dd data-testid="summary-compliance">{output ? complianceStatus : 'not run'}</dd>
-        </div>
-      </dl>
-    </section>
-  )
-}
-
 function App() {
-  const [rawCases, setRawCases] = useState(SAMPLE_TEXT)
-  const [selectedTaskId, setSelectedTaskId] = useState(SAMPLE_CASES[0].task_id)
-  const [resultsByTaskId, setResultsByTaskId] = useState({})
-  const [status, setStatus] = useState('Ready')
+  const [rawInput, setRawInput] = useState('')
+  const [outputText, setOutputText] = useState('')
+  const [running, setRunning] = useState(false)
 
   let cases = []
   let parseError = null
 
   try {
-    cases = parseCases(rawCases)
+    cases = parseCases(rawInput)
   } catch (error) {
     parseError = error
   }
 
-  const selectedCase = cases.find((caseData) => caseData.task_id === selectedTaskId) ?? cases[0]
-  const selectedResult = selectedCase ? resultsByTaskId[selectedCase.task_id] : null
+  const canRun = Boolean(!parseError && cases.length > 0 && !running)
 
-  async function handleRunSelected() {
-    if (!selectedCase) {
-      setStatus('No case selected')
-      return
-    }
+  const trimmedInput = rawInput.trim()
+  const parseErrorJson =
+    trimmedInput && parseError
+      ? JSON.stringify({ error: parseError.message, stage: 'parse' }, null, 2)
+      : null
 
-    setStatus(`Running ${selectedCase.task_id}...`)
+  const outputPanelText =
+    parseErrorJson ?? (outputText ? outputText : null) ?? 'Run a case to see output here.'
+
+  let outputForPreview = null
+  if (outputText && !parseErrorJson) {
     try {
-      const result = await runCase(selectedCase)
-      setResultsByTaskId((previous) => ({
-        ...previous,
-        [selectedCase.task_id]: result,
-      }))
-      setStatus(`Finished ${selectedCase.task_id}`)
-    } catch (error) {
-      setStatus(error.message)
+      outputForPreview = JSON.parse(outputText)
+      // If it's an array, show the first item in preview
+      if (Array.isArray(outputForPreview)) {
+        outputForPreview = outputForPreview[0]
+      }
+    } catch {
+      outputForPreview = null
     }
   }
 
-  async function handleRunAll() {
-    if (!cases.length) {
-      setStatus('No valid cases to run')
+  async function handleRun() {
+    if (!canRun) {
       return
     }
 
-    setStatus(`Running ${cases.length} cases...`)
+    setRunning(true)
+    setOutputText('')
     try {
-      const results = await runAll(cases)
-      setResultsByTaskId((previous) => {
-        const nextResults = { ...previous }
-        for (const result of results) {
-          nextResults[result.taskId] = result.response
-        }
-        return nextResults
-      })
-      setStatus(`Finished ${results.length} cases`)
+      const responses = []
+      for (const caseData of cases) {
+        responses.push(await runCase(caseData))
+      }
+      const display = formatGeneratedOutput(cases, responses)
+      setOutputText(JSON.stringify(display, null, 2))
     } catch (error) {
-      setStatus(error.message)
+      const payload =
+        error && typeof error === 'object' && error.runFailedBody
+          ? error.runFailedBody
+          : { error: 'Run failed', message: String(error?.message ?? error) }
+      setOutputText(JSON.stringify(payload, null, 2))
+    } finally {
+      setRunning(false)
     }
+  }
+
+  function handleClear() {
+    setRawInput('')
+    setOutputText('')
   }
 
   return (
     <main className="runner-shell">
       <section className="runner-header">
-        <p className="eyebrow">RealPage Lumina</p>
-        <h1>Outreach eval runner</h1>
-        <p>Paste JSON or JSONL, run one case or all cases, and compare generated output.</p>
+        <p className="eyebrow">Context-Aware Message Sending Bot</p>
+        <h1>Case runner</h1>
+        <p>Paste JSON or JSONL, run once, read the generated output. Nothing is stored.</p>
       </section>
 
       <div className="runner-grid">
         <section className="input-panel">
           <div className="panel-heading">
-            <h2>Cases</h2>
-            <span>{status}</span>
+            <h2>Input</h2>
           </div>
           <textarea
-            aria-label="JSON cases"
-            onChange={(event) => setRawCases(event.target.value)}
+            aria-label="Case JSON or JSONL"
+            onChange={(event) => setRawInput(event.target.value)}
+            placeholder='Paste one object, an array of cases, or JSONL lines (e.g. from backend/data/sample.jsonl).'
             spellCheck="false"
-            value={rawCases}
+            value={rawInput}
           />
-          {parseError ? <p className="error-text">{parseError.message}</p> : null}
           <div className="actions">
-            <button disabled={Boolean(parseError)} onClick={handleRunSelected} type="button">
-              Run selected
+            <button disabled={!canRun} onClick={handleRun} type="button">
+              {running ? 'Running…' : 'Run'}
             </button>
-            <button disabled={Boolean(parseError)} onClick={handleRunAll} type="button">
-              Run all
+            <button className="button-secondary" onClick={handleClear} type="button">
+              Clear
             </button>
           </div>
-          <CaseList
-            cases={cases}
-            onSelect={setSelectedTaskId}
-            resultsByTaskId={resultsByTaskId}
-            selectedTaskId={selectedCase?.task_id}
-          />
         </section>
 
         <section className="output-panel">
-          <RunSummary result={selectedResult} />
-          <JsonPanel title="Selected input" value={selectedCase ?? {}} />
-          <JsonPanel title="Generated output" value={selectedResult?.output ?? null} />
-          <JsonPanel title="Expected output" value={selectedCase?.expected ?? null} />
+          <div className="panel-heading">
+            <h2>Generated output</h2>
+          </div>
+          {outputForPreview && <MessagePreview output={outputForPreview} />}
+          <pre className="output-pre" data-testid="generated-output">
+            {outputPanelText}
+          </pre>
         </section>
       </div>
     </main>

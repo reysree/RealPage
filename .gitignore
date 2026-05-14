@@ -37,6 +37,12 @@ chroma/
 htmlcov/
 .tox/
 
+# Playwright generated artifacts
+playwright-report/
+test-results/
+frontend/playwright-report/
+frontend/test-results/
+
 # ──────────────────────────────────────────────
 # Node / Frontend
 # ──────────────────────────────────────────────

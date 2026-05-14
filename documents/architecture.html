@@ -1,0 +1,764 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Context-Aware Message Sending Bot — Architecture Diagram</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: #0f1117;
+    color: #e2e8f0;
+    padding: 40px 32px 80px;
+    min-height: 100vh;
+  }
+
+  h1 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: #94a3b8;
+    margin-bottom: 4px;
+  }
+
+  .subtitle {
+    font-size: .85rem;
+    color: #475569;
+    margin-bottom: 48px;
+    letter-spacing: .04em;
+  }
+
+  /* ── section labels ── */
+  .section-label {
+    font-size: .7rem;
+    font-weight: 700;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: #475569;
+    margin-bottom: 20px;
+    padding-left: 4px;
+    border-left: 3px solid #334155;
+    padding-left: 10px;
+  }
+
+  /* ── flow rows ── */
+  .flow-row {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    flex-wrap: nowrap;
+    margin-bottom: 0;
+  }
+
+  /* ── generic box ── */
+  .box {
+    border-radius: 10px;
+    padding: 14px 18px;
+    font-size: .78rem;
+    line-height: 1.55;
+    border: 1px solid transparent;
+    position: relative;
+    flex-shrink: 0;
+  }
+
+  .box .box-title {
+    font-weight: 700;
+    font-size: .8rem;
+    margin-bottom: 4px;
+    letter-spacing: .02em;
+  }
+
+  .box .box-sub {
+    font-size: .7rem;
+    opacity: .72;
+  }
+
+  .box .badge {
+    display: inline-block;
+    font-size: .6rem;
+    font-weight: 700;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    border-radius: 4px;
+    padding: 2px 6px;
+    margin-top: 6px;
+  }
+
+  /* colour themes */
+  .c-frontend  { background: #1e293b; border-color: #3b82f6; }
+  .c-frontend .box-title { color: #60a5fa; }
+  .c-frontend .badge { background: #1d4ed8; color: #bfdbfe; }
+
+  .c-api       { background: #1a2e1a; border-color: #22c55e; }
+  .c-api .box-title { color: #4ade80; }
+  .c-api .badge { background: #166534; color: #bbf7d0; }
+
+  .c-agent     { background: #261e0f; border-color: #f59e0b; }
+  .c-agent .box-title { color: #fbbf24; }
+
+  .c-tool      { background: #1e1a2e; border-color: #a78bfa; }
+  .c-tool .box-title { color: #c4b5fd; }
+
+  .c-openai    { background: #1a2626; border-color: #2dd4bf; }
+  .c-openai .box-title { color: #5eead4; }
+
+  .c-eval      { background: #261a1a; border-color: #f87171; }
+  .c-eval .box-title { color: #fca5a5; }
+
+  .c-data      { background: #1e1e0f; border-color: #eab308; }
+  .c-data .box-title { color: #fde047; }
+
+  .c-output    { background: #0f261a; border-color: #34d399; }
+  .c-output .box-title { color: #6ee7b7; }
+
+  .c-block     { background: #260f0f; border-color: #ef4444; }
+  .c-block .box-title { color: #fca5a5; }
+
+  /* ── arrows ── */
+  .arrow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #475569;
+    font-size: 1.1rem;
+    padding: 0 10px;
+    flex-shrink: 0;
+  }
+
+  .arrow-label {
+    font-size: .62rem;
+    color: #475569;
+    letter-spacing: .04em;
+  }
+
+  .arrow-v {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    color: #475569;
+    font-size: .9rem;
+    margin: 6px 0;
+    gap: 2px;
+  }
+
+  /* ── pipeline column ── */
+  .pipeline {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0;
+    margin: 20px 0;
+  }
+
+  .pipeline-step {
+    display: flex;
+    align-items: center;
+    gap: 0;
+  }
+
+  .pipeline-step-inner {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  /* ── block branch ── */
+  .branch {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: 12px;
+  }
+
+  /* ── grid for two-col layout ── */
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 40px;
+    align-items: start;
+    margin-top: 20px;
+  }
+
+  /* divider */
+  hr {
+    border: none;
+    border-top: 1px solid #1e293b;
+    margin: 48px 0;
+  }
+
+  /* connector lines using borders */
+  .connector-v {
+    width: 2px;
+    height: 28px;
+    background: #334155;
+    margin-left: 50px;
+  }
+
+  /* ── step number ── */
+  .step-num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: #334155;
+    color: #94a3b8;
+    font-size: .62rem;
+    font-weight: 700;
+    margin-right: 8px;
+    flex-shrink: 0;
+  }
+
+  /* score grid */
+  .score-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-top: 12px;
+  }
+
+  .score-item {
+    background: #0f1117;
+    border: 1px solid #1e293b;
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: .68rem;
+  }
+
+  .score-item .si-label {
+    font-weight: 700;
+    color: #94a3b8;
+    margin-bottom: 3px;
+  }
+
+  .score-item .si-detail {
+    color: #64748b;
+    line-height: 1.4;
+  }
+
+  .tag-pass { color: #4ade80; }
+  .tag-fail { color: #f87171; }
+
+  /* legend */
+  .legend {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+    margin-top: 48px;
+    padding-top: 20px;
+    border-top: 1px solid #1e293b;
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: .7rem;
+    color: #64748b;
+  }
+
+  .legend-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 3px;
+    flex-shrink: 0;
+  }
+
+  /* ── wide pipeline layout ── */
+  .runtime-flow {
+    display: flex;
+    gap: 0;
+    align-items: flex-start;
+    margin-top: 20px;
+  }
+
+  .rt-col {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .rt-h-arrow {
+    display: flex;
+    align-items: center;
+    margin-top: 30px;
+    color: #475569;
+    gap: 6px;
+  }
+
+  table.info-table {
+    border-collapse: collapse;
+    font-size: .72rem;
+    width: 100%;
+    margin-top: 12px;
+  }
+  table.info-table th {
+    text-align: left;
+    color: #64748b;
+    padding: 4px 8px;
+    font-weight: 600;
+    border-bottom: 1px solid #1e293b;
+  }
+  table.info-table td {
+    padding: 5px 8px;
+    color: #94a3b8;
+    border-bottom: 1px solid #0f172a;
+    vertical-align: top;
+  }
+  table.info-table td:first-child { color: #e2e8f0; }
+</style>
+</head>
+<body>
+
+<h1>Context-Aware Message Sending Bot</h1>
+<div class="subtitle">Architecture Diagram &nbsp;·&nbsp; Outreach Agent Pipeline</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!--  SECTION 1 · RUNTIME REQUEST FLOW                             -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="section-label">1 · Runtime Request Flow</div>
+
+<div class="runtime-flow">
+
+  <!-- FRONTEND -->
+  <div class="rt-col">
+    <div class="box c-frontend" style="width:180px">
+      <div class="box-title">React Frontend</div>
+      <div class="box-sub">
+        <code>frontend/src/App.jsx</code><br>
+        <code>frontend/src/api.js</code>
+      </div>
+      <span class="badge">Vite · :5173</span>
+    </div>
+    <div style="font-size:.65rem;color:#475569;margin-top:8px;text-align:center">
+      Paste JSONL / JSON<br>Click <em>Run</em>
+    </div>
+  </div>
+
+  <!-- → -->
+  <div class="rt-h-arrow">
+    <div style="display:flex;flex-direction:column;align-items:center;gap:2px">
+      <span style="font-size:.62rem;color:#475569">POST /run</span>
+      <span style="font-size:1.1rem">→</span>
+      <span style="font-size:.62rem;color:#475569">RunRequest</span>
+    </div>
+  </div>
+
+  <!-- FASTAPI -->
+  <div class="rt-col">
+    <div class="box c-api" style="width:190px">
+      <div class="box-title">FastAPI Backend</div>
+      <div class="box-sub">
+        <code>backend/main.py</code><br>
+        Validates <code>RunRequest</code><br>
+        Returns <code>RunResponse</code>
+      </div>
+      <span class="badge">uvicorn · :8000</span>
+    </div>
+    <div style="font-size:.65rem;color:#475569;margin-top:8px;text-align:center">
+      CORS · error handlers<br>/health · /run
+    </div>
+  </div>
+
+  <!-- → -->
+  <div class="rt-h-arrow">
+    <div style="display:flex;flex-direction:column;align-items:center;gap:2px">
+      <span style="font-size:.62rem;color:#475569">run_agent()</span>
+      <span style="font-size:1.1rem">→</span>
+      <span style="font-size:.62rem;color:#475569">dict payload</span>
+    </div>
+  </div>
+
+  <!-- AGENT PIPELINE -->
+  <div class="rt-col" style="align-items:flex-start">
+    <div class="box c-agent" style="width:560px;padding-bottom:18px">
+      <div class="box-title" style="margin-bottom:12px">Agent Orchestrator &nbsp;<span style="font-weight:400;color:#94a3b8;font-size:.7rem">backend/agent.py · run_agent()</span></div>
+
+      <div class="pipeline">
+
+        <!-- Step 1 -->
+        <div class="pipeline-step">
+          <div class="pipeline-step-inner">
+            <div style="display:flex;align-items:center">
+              <span class="step-num">1</span>
+              <div class="box c-tool" style="width:300px;padding:10px 14px">
+                <div class="box-title">check_input_security</div>
+                <div class="box-sub">Screens all free-text fields for injection / prompt attacks</div>
+              </div>
+              <div class="branch">
+                <span style="color:#475569;font-size:.8rem">✗</span>
+                <div class="box c-block" style="padding:6px 10px;font-size:.68rem">
+                  <div class="box-title" style="font-size:.68rem">BLOCKED</div>
+                  send=false · human_in_the_loop
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="connector-v"></div>
+
+        <!-- Step 2 -->
+        <div class="pipeline-step">
+          <div class="pipeline-step-inner">
+            <div style="display:flex;align-items:center">
+              <span class="step-num">2</span>
+              <div class="box c-tool" style="width:300px;padding:10px 14px">
+                <div class="box-title">select_channel</div>
+                <div class="box-sub">Picks best channel from <code>channel_preferences ∩ opt-in flags</code></div>
+              </div>
+              <div class="branch">
+                <span style="color:#475569;font-size:.8rem">✗</span>
+                <div class="box c-block" style="padding:6px 10px;font-size:.68rem">
+                  <div class="box-title" style="font-size:.68rem">BLOCKED</div>
+                  No eligible channel
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="connector-v"></div>
+
+        <!-- Step 3 -->
+        <div class="pipeline-step">
+          <div class="pipeline-step-inner">
+            <div style="display:flex;align-items:center">
+              <span class="step-num">3</span>
+              <div class="box c-tool" style="width:300px;padding:10px 14px">
+                <div class="box-title">check_consent</div>
+                <div class="box-sub">Verifies opt-in for the selected channel</div>
+              </div>
+              <div class="branch">
+                <span style="color:#475569;font-size:.8rem">✗</span>
+                <div class="box c-block" style="padding:6px 10px;font-size:.68rem">
+                  <div class="box-title" style="font-size:.68rem">BLOCKED</div>
+                  Channel not consented
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="connector-v"></div>
+
+        <!-- Step 4 -->
+        <div class="pipeline-step">
+          <div class="pipeline-step-inner">
+            <div style="display:flex;align-items:center">
+              <span class="step-num">4</span>
+              <div class="box c-tool" style="width:300px;padding:10px 14px">
+                <div class="box-title">determine_send_time</div>
+                <div class="box-sub">Computes <code>send_at</code> from timezone + lifecycle window rules</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="connector-v"></div>
+
+        <!-- Step 5 -->
+        <div class="pipeline-step">
+          <div class="pipeline-step-inner">
+            <div style="display:flex;align-items:center">
+              <span class="step-num">5</span>
+              <div class="box c-tool" style="width:300px;padding:10px 14px">
+                <div class="box-title">compose_message</div>
+                <div class="box-sub">Calls OpenAI chat API → generates body + CTA</div>
+              </div>
+              <div class="branch">
+                <span style="color:#475569;font-size:.8rem">→</span>
+                <div class="box c-openai" style="padding:6px 10px;font-size:.68rem">
+                  <div class="box-title" style="font-size:.68rem">OpenAI gpt-4o</div>
+                  Chat Completions API
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="connector-v"></div>
+
+        <!-- Step 6 -->
+        <div class="pipeline-step">
+          <div class="pipeline-step-inner">
+            <div style="display:flex;align-items:center">
+              <span class="step-num">6</span>
+              <div class="box c-tool" style="width:300px;padding:10px 14px">
+                <div class="box-title">check_compliance</div>
+                <div class="box-sub">Fair Housing · PII · opt-out instructions · constraint suffixes</div>
+              </div>
+              <div class="branch">
+                <span style="color:#475569;font-size:.8rem">✗</span>
+                <div class="box c-block" style="padding:6px 10px;font-size:.68rem">
+                  <div class="box-title" style="font-size:.68rem">BLOCKED</div>
+                  Violations found
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="connector-v"></div>
+
+        <!-- Output -->
+        <div class="pipeline-step">
+          <div class="pipeline-step-inner">
+            <div style="display:flex;align-items:center">
+              <span class="step-num" style="background:#166534;color:#bbf7d0">✓</span>
+              <div class="box c-output" style="width:420px;padding:10px 14px">
+                <div class="box-title">AgentOutput</div>
+                <div class="box-sub" style="display:grid;grid-template-columns:1fr 1fr;gap:4px 16px;margin-top:4px">
+                  <span><strong style="color:#6ee7b7">send</strong> = true</span>
+                  <span><strong style="color:#6ee7b7">channel</strong> sms | email | voice</span>
+                  <span><strong style="color:#6ee7b7">body</strong> composed text</span>
+                  <span><strong style="color:#6ee7b7">send_at</strong> ISO8601 timestamp</span>
+                  <span><strong style="color:#6ee7b7">cta</strong> type + options</span>
+                  <span><strong style="color:#6ee7b7">next_action</strong> cadence / follow-up</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div><!-- /pipeline -->
+    </div><!-- /agent box -->
+
+    <div style="font-size:.65rem;color:#475569;margin-top:8px;padding-left:4px">
+      Every step appends one entry to <code>audit_trail[]</code>. All tool calls return <code>ToolResultEnvelope</code>.
+    </div>
+  </div><!-- /rt-col agent -->
+
+</div><!-- /runtime-flow -->
+
+<hr>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!--  SECTION 2 · EVAL HARNESS FLOW                               -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="section-label">2 · Eval Harness Flow</div>
+
+<div class="runtime-flow" style="align-items:flex-start">
+
+  <!-- DATA -->
+  <div class="rt-col">
+    <div class="box c-data" style="width:190px">
+      <div class="box-title">sample.jsonl</div>
+      <div class="box-sub">
+        <code>backend/data/</code><br><br>
+        Per case:<br>
+        · <strong>input</strong> — profile, consent, prefs<br>
+        · <strong>assertions</strong> — constraints<br>
+        · <strong>thresholds</strong> — p95, personalization<br>
+        · <strong>expected</strong> — golden (informational)
+      </div>
+    </div>
+  </div>
+
+  <!-- → -->
+  <div class="rt-h-arrow">
+    <div style="display:flex;flex-direction:column;align-items:center;gap:2px">
+      <span style="font-size:.62rem;color:#475569">load_cases()</span>
+      <span style="font-size:1.1rem">→</span>
+    </div>
+  </div>
+
+  <!-- RUNNER -->
+  <div class="rt-col">
+    <div class="box c-eval" style="width:210px">
+      <div class="box-title">runner.py · run_case()</div>
+      <div class="box-sub">
+        Repeats <code>POST /run</code> × N<br>
+        Collects wall-time samples<br>
+        Computes P95 latency<br>
+        <br>
+        N = <code>REALPAGE_EVAL_LATENCY_RUNS</code><br>
+        (default 20 via CLI)
+      </div>
+    </div>
+  </div>
+
+  <!-- → -->
+  <div class="rt-h-arrow">
+    <div style="display:flex;flex-direction:column;align-items:center;gap:2px">
+      <span style="font-size:.62rem;color:#475569">generated output</span>
+      <span style="font-size:1.1rem">→</span>
+    </div>
+  </div>
+
+  <!-- SCORER -->
+  <div class="rt-col" style="align-items:flex-start">
+    <div class="box c-eval" style="width:560px">
+      <div class="box-title" style="margin-bottom:10px">score_output() &nbsp;<span style="font-weight:400;color:#94a3b8;font-size:.7rem">runner.py</span></div>
+
+      <div class="score-grid">
+
+        <div class="score-item">
+          <div class="si-label">compliance_pass</div>
+          <div class="si-detail">
+            <code>OPT_OUT_PATTERN</code> regex found in body<br>
+            Only checked when <code>send=true</code>
+          </div>
+        </div>
+
+        <div class="score-item">
+          <div class="si-label">constraints_pass</div>
+          <div class="si-detail">
+            <code>check_compliance()</code> re-run on body<br>
+            against <code>assertions.constraints</code>
+          </div>
+        </div>
+
+        <div class="score-item">
+          <div class="si-label">safety_violations_pass</div>
+          <div class="si-detail">
+            <code>len(violations) ≤ safety_violations_max</code><br>
+            Only when threshold is present in case
+          </div>
+        </div>
+
+        <div class="score-item" style="border-color:#2dd4bf">
+          <div class="si-label" style="color:#5eead4">personalization_pass</div>
+          <div class="si-detail">
+            LLM judge (gpt-4o) scores the body<br>
+            Score ≥ <code>personalization_score_min</code><br>
+            <em>→ see rubric below</em>
+          </div>
+        </div>
+
+        <div class="score-item" style="border-color:#94a3b8;grid-column:1/-1">
+          <div class="si-label" style="color:#94a3b8">latency_pass &nbsp;<em style="font-weight:400;font-size:.62rem">(informational — not a correctness gate)</em></div>
+          <div class="si-detail">
+            Agent P95 ≤ <code>p95_latency_ms</code> (from case thresholds, e.g. 2000 ms)<br>
+            Excluded from <code>passed = all(correctness_scores)</code>
+          </div>
+        </div>
+
+      </div>
+
+      <div style="margin-top:14px;font-size:.68rem;color:#64748b">
+        <strong style="color:#94a3b8">Gate:</strong>
+        <code>passed = all([compliance_pass, constraints_pass, safety_violations_pass, personalization_pass])</code>
+      </div>
+    </div>
+  </div>
+
+  <!-- → OpenAI judge -->
+  <div class="rt-h-arrow" style="margin-top:55px">
+    <div style="display:flex;flex-direction:column;align-items:center;gap:2px">
+      <span style="font-size:.62rem;color:#475569">_score_personalization()</span>
+      <span style="font-size:1.1rem">→</span>
+    </div>
+  </div>
+
+  <div class="rt-col" style="margin-top:35px">
+    <div class="box c-openai" style="width:200px">
+      <div class="box-title">OpenAI LLM Judge</div>
+      <div class="box-sub">
+        <code>gpt-4o · temp=0</code><br>
+        <code>response_format: json</code><br>
+        <br>
+        Returns:<br>
+        <code>{"score": 0–1, "reasoning": "…"}</code>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /eval runtime-flow -->
+
+<hr>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!--  SECTION 3 · PERSONALIZATION RUBRIC                          -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="section-label">3 · Personalization Score Rubric (LLM Judge)</div>
+
+<table class="info-table" style="max-width:680px">
+  <thead>
+    <tr>
+      <th>Criterion</th>
+      <th>Points</th>
+      <th>Notes</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Recipient's first name used correctly</td>
+      <td><strong class="tag-pass">+0.30</strong></td>
+      <td>Must appear verbatim in body</td>
+    </tr>
+    <tr>
+      <td>Property name mentioned naturally</td>
+      <td><strong class="tag-pass">+0.25</strong></td>
+      <td>Not just in opt-out suffix</td>
+    </tr>
+    <tr>
+      <td>At least one interest field used (city, amenity, or move timeline)</td>
+      <td><strong class="tag-pass">+0.30</strong></td>
+      <td>First match from profile fields</td>
+    </tr>
+    <tr>
+      <td>Each additional interest field beyond the first</td>
+      <td><strong class="tag-pass">+0.075 each</strong></td>
+      <td>Capped at +0.15 bonus total</td>
+    </tr>
+    <tr>
+      <td><strong>Full use of all profile fields</strong></td>
+      <td><strong class="tag-pass">≥ 0.85</strong></td>
+      <td>Minimum threshold for cases 1 &amp; 2</td>
+    </tr>
+    <tr>
+      <td>Judge unavailable (no API key or exception)</td>
+      <td><strong class="tag-fail">FAIL</strong></td>
+      <td><code>score = None → personalization_pass = False</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<hr>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!--  SECTION 4 · MODULE MAP                                       -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="section-label">4 · Module Map</div>
+
+<table class="info-table">
+  <thead>
+    <tr><th>File</th><th>Role</th><th>Key exports</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>backend/main.py</td><td>FastAPI app factory, CORS, error handlers</td><td><code>create_app()</code>, <code>app</code></td></tr>
+    <tr><td>backend/agent.py</td><td>Stateless orchestrator — calls tools in sequence</td><td><code>run_agent()</code></td></tr>
+    <tr><td>backend/tools/input_security.py</td><td>Regex + LLM screens free-text for injection</td><td><code>check_input_security()</code></td></tr>
+    <tr><td>backend/tools/channel_selector.py</td><td>Intersects preferences with opt-in flags</td><td><code>select_channel()</code></td></tr>
+    <tr><td>backend/tools/consent.py</td><td>Per-channel consent verification</td><td><code>check_consent()</code></td></tr>
+    <tr><td>backend/tools/timing.py</td><td>Timezone-aware send window computation</td><td><code>determine_send_time()</code></td></tr>
+    <tr><td>backend/tools/message_composer.py</td><td>OpenAI chat completion → message body + CTA</td><td><code>compose_message()</code></td></tr>
+    <tr><td>backend/tools/compliance.py</td><td>Fair Housing, PII, opt-out regex checks</td><td><code>check_compliance()</code>, <code>OPT_OUT_PATTERN</code></td></tr>
+    <tr><td>backend/schemas/</td><td>Pydantic models for all API boundaries</td><td><code>RunRequest</code>, <code>AgentOutput</code>, <code>ToolResultEnvelope</code></td></tr>
+    <tr><td>backend/evals/runner.py</td><td>JSONL eval harness — runs cases, scores output</td><td><code>run_all()</code>, <code>run_case()</code>, <code>score_output()</code></td></tr>
+    <tr><td>backend/data/sample.jsonl</td><td>Eval test cases with client thresholds (do not edit thresholds)</td><td>5 cases</td></tr>
+    <tr><td>frontend/src/App.jsx</td><td>React UI — paste JSONL, trigger runs, display results</td><td><code>App</code></td></tr>
+    <tr><td>frontend/src/api.js</td><td>All fetch calls centralised here</td><td><code>runCase()</code>, <code>runAll()</code></td></tr>
+  </tbody>
+</table>
+
+<!-- ── Legend ── -->
+<div class="legend">
+  <div class="legend-item"><div class="legend-dot" style="background:#3b82f6"></div>Frontend (React/Vite)</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#22c55e"></div>FastAPI Backend</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#f59e0b"></div>Agent Orchestrator</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#a78bfa"></div>In-process Tools</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#2dd4bf"></div>OpenAI API (compose + judge)</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#f87171"></div>Eval Harness</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#eab308"></div>JSONL Test Data</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#34d399"></div>Successful Output</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#ef4444"></div>Blocked / Failed</div>
+</div>
+
+</body>
+</html>

@@ -45,10 +45,10 @@ Every case must carry the same ordered triple: `consent_verified`, `fair_housing
 
 ## Eval harness integrity (2026-05-14)
 
-**Composer:** Default is `REALPAGE_EVAL_STUB_COMPOSE=true` so POST `/run` uses fixture-backed compose output and exact `body_match` vs JSONL is meaningful. Live OpenAI compose requires `REALPAGE_EVAL_STUB_COMPOSE=false`; model text may diverge from golden fixtures unless eval criteria are semantic.
+**Composer:** CLI `python -m backend.evals.runner` always POSTs `/run` with production `compose_message` (OpenAI chat). The JSONL `expected` message is **not** wired into scoring.
 
-**Personalization:** If `personalization_score_min` is set and the run expects a send, `personalization_pass` is always emitted. It is **false** when the judge does not return a score (no silent pass).
+**Personalization:** When `personalization_score_min` is set and the agent sends, `personalization_pass` is emitted. It is **false** when `_score_personalization` cannot return a score.
 
-**P95 with multiple samples:** For `REALPAGE_EVAL_LATENCY_RUNS` > 1, latency samples are repeated POST `/run` only; **one** scoring pass (compose-for-judge + `score_output`) runs afterward so P95 is not polluted by repeated non-deterministic judge calls. `case_wall_clock_ms` is full wall time for the case; `p95_latency_ms` still gates **P95 of /run** only.
+**P95 with multiple samples:** For multiple timed samples, latency uses repeated POST `/run` only; **one** scoring pass runs afterward.
 
-**pytest:** Autouse fixtures stub the composer and return a deterministic personalization score so CI does not imply production passed without OpenAI.
+**pytest:** Autouse fixtures patch `compose_message` with input-shaped synthetic output and fix the judge score so CI stays deterministic without billed OpenAI for those unit tests.

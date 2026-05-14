@@ -12,6 +12,9 @@ Before writing any code, verify all required prerequisites exist:
 Then read the checkpoint protocol:
 5. `.cursor/skills/recall/SKILL.md` — how to read existing checkpoints and write new ones
 
+**SQLite persistence:** when the task adds or changes `sqlite3` usage, schema, or SQL in
+tools or the data layer, read **`.cursor/skills/sqlite3-guide/SKILL.md`** before editing.
+
 Run `ls logs/ | sort | tail -5` and read the latest checkpoint. If `logs/` is empty or
 absent, you are the first agent — proceed from the architect's recall file.
 
@@ -74,7 +77,7 @@ If a file is approaching its limit, split it rather than growing it.
 | `schemas.py` (Pydantic models) | 500 | Split: `schemas.py` → API models; `schemas_eval.py` → eval-only models |
 | `eval_runner.py` (eval harness) | 600 | Extract per-concern helpers; keep `run_case`, `score_output`, `run_all` in one file |
 | Utility modules (`url_security.py`, `content_policy.py`, `constants.py`, `audit_log.py`) | 150 | Extract constants to `constants.py` if it grows |
-| `compose_fixture_stub.py` | 100 | Stub logic only — no production code |
+| `tests/test_support/compose_stub.py` | 100 | Test-only compose patches — no production import |
 
 **Do not add LOC to a file just to stay under the limit.** The limit enforces single-responsibility. If a file is long because it has too many responsibilities, split it; if it is long because one responsibility is genuinely complex, that is acceptable up to the limit.
 

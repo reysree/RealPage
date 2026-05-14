@@ -1,6 +1,6 @@
 # Audit Codebase
 
-Run a structural and correctness audit of the entire RealPage Lumina codebase.
+Run a structural and correctness audit of the entire codebase.
 Use after completing any implementation phase, when the Stop hook reports a failure,
 or before handing off to the Audit Agent.
 

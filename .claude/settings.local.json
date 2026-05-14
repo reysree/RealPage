@@ -8,7 +8,19 @@
       "Bash(chmod +x *)",
       "Bash(Remove-Item *)",
       "Bash(bash .claude/scripts/audit.sh)",
-      "Bash(echo \"exit: $?\")"
+      "Bash(echo \"exit: $?\")",
+      "PowerShell(Get-ChildItem -Path \"C:\\\\reysree\\\\realpage\\\\backend\" -Force | Where-Object { $_.PSIsContainer } | Format-Table Name)",
+      "PowerShell(New-Item *)",
+      "PowerShell(Get-ChildItem *)",
+      "PowerShell(\\(Get-Content \"backend/data/sample.jsonl\" -ErrorAction SilentlyContinue | Measure-Object -Line\\).Lines)",
+      "Bash(grep -E \"^\\(python-guide|openai-sdk-guide|tdd|recall|sqlite3-guide\\)$\")",
+      "Bash(python -m pytest tests/ -v)",
+      "Bash(python *)",
+      "Bash(npm run *)",
+      "Bash(timeout 60 npx playwright test --project chromium)",
+      "Bash(netstat -ano)",
+      "Bash(taskkill /PID 32312 /F)",
+      "PowerShell(Get-Process *)"
     ]
   }
 }

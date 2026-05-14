@@ -1,0 +1,16 @@
+{
+  "send": false,
+  "decision_reason": "The input-security screen detects prompt-injection text before channel selection or message composition.",
+  "next_message": null,
+  "next_action": {
+    "type": "human_in_the_loop",
+    "name": "pipeline_blocked",
+    "value": null
+  },
+  "audit_trail": [
+    {
+      "node": "input_security",
+      "decision": false
+    }
+  ]
+}

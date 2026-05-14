@@ -24,6 +24,7 @@ from backend.schemas.types import (
     JsonBoolean,
     JsonFloat,
     JsonInt,
+    OptionalJsonInt,
     LanguageCode,
     LifecycleKind,
     LongText,
@@ -254,17 +255,17 @@ class ThresholdsRecord(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    p95_latency_ms: JsonInt = Field(..., description="Maximum allowed p95 latency.")
-    personalization_score_min: JsonFloat = Field(
-        ...,
+    p95_latency_ms: OptionalJsonInt = Field(None, description="Maximum allowed p95 latency.")
+    personalization_score_min: OptionalJsonFloat = Field(
+        None,
         description="Minimum semantic personalization score.",
     )
     reply_classification_f1_min: OptionalJsonFloat = Field(
         None,
         description="Minimum reply classification F1 score (optional until reply stack exists).",
     )
-    safety_violations_max: JsonInt = Field(
-        ...,
+    safety_violations_max: OptionalJsonInt = Field(
+        None,
         description="Maximum allowed safety violations.",
     )
 
@@ -323,12 +324,25 @@ class NextAction(BaseModel):
     )
 
 
+class AuditTrailEntry(BaseModel):
+    """
+    One entry in the agent's execution audit trail.
+    """
+
+    node: str = Field(..., description="Name of the node that executed.")
+    decision: bool = Field(..., description="Decision made by the node (pass/fail or send/don't send).")
+    reasoning: str = Field(..., description="Brief explanation of the decision.")
+    timestamp: str = Field(..., description="ISO8601 timestamp when the node executed.")
+
+
 class AgentOutput(BaseModel):
     """
     Final decision returned by the agent for one outreach case.
 
     Error details are never returned here — failures produce send=false with empty
     fields. Internal error codes and summaries go to logs/agent_audit.ndjson only.
+
+    Message body text lives only under ``next_message.body`` when ``send`` is true.
     """
 
     send: bool = Field(..., description="Whether a message should be sent.")
@@ -340,24 +354,10 @@ class AgentOutput(BaseModel):
         None,
         description="Recommended follow-up action.",
     )
-    body: str = Field(
-        default="",
-        max_length=2000,
-        description="Denormalized message body: mirrors next_message.body when send; "
-        "empty when no message is composed.",
+    audit_trail: list[AuditTrailEntry] | None = Field(
+        None,
+        description="Execution trace through agent nodes.",
     )
-
-    @model_validator(mode="after")
-    def sync_body_from_message(self) -> Self:
-        """
-        Keep body aligned with next_message for API consumers and empty when absent.
-        """
-
-        if self.next_message is not None:
-            self.body = self.next_message.body
-        else:
-            self.body = ""
-        return self
 
 
 class ExpectedOutput(BaseModel):
@@ -412,7 +412,19 @@ class TestCase(BaseModel):
 class RunRequest(TestCase):
     """
     API request model for running one outreach JSONL case.
+
+    thresholds and expected are eval-harness fields — they are optional here because
+    the agent pipeline never reads them. TestCase requires them for JSONL eval cases.
     """
+
+    thresholds: ThresholdsRecord | None = Field(
+        None,
+        description="Eval thresholds — omit or pass {} for ad-hoc API runs.",
+    )
+    expected: ExpectedOutput | None = Field(
+        None,
+        description="Expected output — omit or pass {} for ad-hoc API runs.",
+    )
 
     @model_validator(mode="after")
     def enforce_content_language_policy(self) -> Self:

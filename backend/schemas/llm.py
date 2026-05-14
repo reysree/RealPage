@@ -33,6 +33,17 @@ class ComposerCtaLlmOutput(BaseModel):
         description="URL string for email-style CTAs when present.",
     )
 
+    @model_validator(mode="after")
+    def link_matches_channel(self, info: ValidationInfo) -> Self:
+        """
+        Enforce that sms and voice CTAs never include a link.
+        """
+
+        channel = (info.context or {}).get("channel")
+        if channel in ("sms", "voice") and self.link is not None:
+            raise ValueError("composer_cta_link_must_be_null_for_sms_or_voice")
+        return self
+
 
 class ComposerLlmOutput(BaseModel):
     """

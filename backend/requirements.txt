@@ -6,6 +6,7 @@ python-multipart>=0.0.9
 # Data validation & settings (FastAPI uses Pydantic v2)
 pydantic>=2.0
 pydantic-settings>=2.0
+python-dotenv>=1.0.0
 
 # OpenAI Python SDK ("opensdk")
 openai>=1.40.0

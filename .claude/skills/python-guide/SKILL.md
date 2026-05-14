@@ -1,5 +1,5 @@
 # Python Skill
-# RealPage Lumina — AI Property Management Platform
+# Context-Aware Message Sending Bot
 
 ## Purpose
 
@@ -173,7 +173,7 @@ async def chat(request: ChatRequest):
 Tools return structured results regardless of success or failure.
 Orchestration code or the Agents SDK unwraps outcomes; never bubble raw failures as uncaught exceptions from a tool.
 
-**RealPage Lumina (plain Python orchestration)**
+**This project (plain Python orchestration)**
 
 Return `ToolResultEnvelope` (`backend.schemas`): `error`, optional `error_code`, and dict `result`. Callers use helpers such as `_unwrap_tool_result`; do **not** `json.dumps` / `json.loads` between in-process helpers.
 
@@ -264,6 +264,9 @@ What NOT to log:
 
 ## SQLite Patterns
 
+Minimal patterns for everyday use. For schema design, migrations, concurrency with FastAPI,
+and detailed security rules, read **`sqlite3-guide/SKILL.md`**.
+
 Use `sqlite3.connect()` as a context manager. Always use parameterized queries.
 
 ```python
@@ -329,7 +332,7 @@ return ToolResultEnvelope(error=None, result=payload).model_dump_json(exclude_no
 
 **External payloads only**
 
-Reserve `json.loads` / manual `json.dumps` for HTTP bodies, files, LLM `message.content`, and storage — not for handoffs between cooperating Python functions in RealPage Lumina core.
+Reserve `json.loads` / manual `json.dumps` for HTTP bodies, files, LLM `message.content`, and storage — not for handoffs between cooperating Python functions in this project's core.
 
 ```python
 try:
