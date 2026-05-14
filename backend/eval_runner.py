@@ -47,19 +47,19 @@ def _load_dotenv() -> None:
 _load_dotenv()
 
 _PERSONALIZATION_JUDGE_PROMPT = """You are a message quality judge for property management outreach.
-Score how personalized this message feels for the given recipient profile.
+Score how well the message uses the profile fields provided in the input.
 
-Scoring rubric — award points when each criterion is clearly met:
-- Recipient's first name is used correctly: 0.3 points
-- A specific profile interest is referenced — this includes city_interest (target location or city),
-  amenity_interest (named amenities like pool, fitness), or move timeline: 0.3 points
-- The property name is mentioned naturally: 0.2 points
-- The overall tone feels tailored to this specific person rather than a generic template: 0.2 points
+Scoring rubric:
+- Recipient's first name is used correctly: 0.30 points
+- The property name is mentioned naturally: 0.25 points
+- At least one present interest field is used — city_interest named, at least one amenity named,
+  or move timeline acknowledged: 0.30 points
+- Each additional present interest field also used beyond the first: +0.075 points each,
+  capped at 0.15 bonus
 
-Channel-aware tone rule: SMS messages are limited to a short character count by format.
-For SMS, award the full 0.2 tone points when all available profile fields are present and
-the message is conversational in register — do not penalise brevity as a lack of personalisation.
-For email or voice, apply the tone criterion at full strictness.
+A message that correctly uses every profile field present in the input scores 0.85 or above.
+Deduct proportionally for any present field that is absent from the body.
+Do not award or deduct points for tone, style, channel format, or message length.
 
 Return JSON only: {"score": <number 0.0 to 1.0>, "reasoning": "<one sentence>"}
 """
@@ -153,7 +153,6 @@ def _score_personalization(
     body: str,
     profile: dict[str, Any],
     property_name: str,
-    channel: str = "",
 ) -> float | None:
     """
     Call an LLM judge to score message personalization on a 0.0–1.0 scale.
@@ -162,8 +161,6 @@ def _score_personalization(
         body: Generated message body to evaluate.
         profile: Recipient profile facts (first_name, amenity_interest, etc.).
         property_name: Property being marketed.
-        channel: Selected outreach channel (sms, email, voice) — passed to the judge
-            so the channel-aware tone rule is applied precisely, not inferred.
     Returns:
         Personalization score between 0.0 and 1.0, or None when LLM is unavailable.
     """
@@ -188,7 +185,6 @@ def _score_personalization(
                     "role": "user",
                     "content": json.dumps(
                         {
-                            "channel": channel,
                             "body": body,
                             "profile": profile,
                             "property_name": property_name,
@@ -342,12 +338,7 @@ def score_output(
     if personalization_min is not None and generated.get("send") is True:
         score_body = personalization_body if personalization_body else body
         if score_body:
-            p_score = _score_personalization(
-                score_body,
-                profile or {},
-                property_name,
-                channel=str(generated_message.get("channel") or ""),
-            )
+            p_score = _score_personalization(score_body, profile or {}, property_name)
             if p_score is not None:
                 scores["personalization_pass"] = p_score >= float(personalization_min)
 
