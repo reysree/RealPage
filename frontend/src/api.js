@@ -60,3 +60,38 @@ export async function runAll(cases) {
 
   return results
 }
+
+/**
+ * Run the bundled repository `sample.json` cases through the eval harness (backend).
+ *
+ * @param {number | undefined} latencySampleCount — optional query override (P95 sampling); omit for server default.
+ * @returns {Promise<{ total: number, passed: number, failed: number, results: object[], source: string }>}
+ */
+export async function runEvalSample(latencySampleCount) {
+  const params = new URLSearchParams()
+  if (latencySampleCount != null && Number.isFinite(latencySampleCount) && latencySampleCount >= 1) {
+    params.set('latency_sample_count', String(Math.floor(latencySampleCount)))
+  }
+  const qs = params.toString()
+  const url = `${API_BASE_URL}/eval/run-sample${qs ? `?${qs}` : ''}`
+  const response = await fetch(url, { method: 'POST' })
+
+  const text = await response.text()
+  const parsed = jsonBodyFromResponseText(text)
+
+  if (!response.ok) {
+    const body = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+    const message =
+      typeof body.message === 'string' && body.message.trim()
+        ? body.message.trim()
+        : 'Eval run failed.'
+    const err = new Error('Eval run failed')
+    err.evalFailedBody = {
+      error: typeof body.error === 'string' && body.error.trim() ? body.error.trim() : 'Eval failed',
+      message,
+    }
+    throw err
+  }
+
+  return parsed
+}

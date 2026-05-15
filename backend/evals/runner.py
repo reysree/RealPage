@@ -13,6 +13,7 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any
 
+from backend.schemas import SafetyViolationsRuleEval
 from backend.tools.compliance import OPT_OUT_PATTERN, check_compliance
 
 logger = logging.getLogger(__name__)
@@ -109,7 +110,7 @@ def _resolve_latency_sample_count(explicit: int | None) -> int:
 
     if explicit is not None:
         return max(1, int(explicit))
-    raw = os.getenv("REALPAGE_EVAL_LATENCY_RUNS", "1")
+    raw = os.getenv("REALPAGE_EVAL_LATENCY_RUNS", str(DEFAULT_CLI_LATENCY_RUNS))
     try:
         return max(1, int(raw))
     except ValueError:
@@ -219,9 +220,10 @@ def _run_case_via_api(case: dict[str, Any]) -> dict[str, Any]:
     """
     Run one case through the FastAPI ``/run`` route (production compose in ``compose_message``).
 
-    Scores are derived from constraints and thresholds on the composed output; optional
-    personalization uses an OpenAI judge on that body when ``personalization_score_min``
-    is set — not golden ``expected`` text from the JSONL sample.
+    Scores are derived from constraints and thresholds on the composed output.
+    The eval harness runs an OpenAI personalization judge on the composed body whenever
+    ``send`` is true (see ``_score_output_bundle``); ``personalization_pass`` still
+    applies only when ``personalization_score_min`` is set — not golden ``expected`` text.
 
     Args:
         case: Parsed JSONL case.
@@ -239,6 +241,77 @@ def _run_case_via_api(case: dict[str, Any]) -> dict[str, Any]:
         raise RuntimeError(f"/run failed during eval: status={response.status_code}")
     payload = response.json()
     return payload["output"]
+
+
+def _score_output_bundle(
+    generated: dict[str, Any],
+    assertions: dict[str, Any] | None = None,
+    thresholds: dict[str, Any] | None = None,
+    *,
+    profile: dict[str, Any] | None = None,
+    property_name: str = "",
+) -> tuple[dict[str, bool], SafetyViolationsRuleEval, float | None]:
+    """
+    Score generated output, personalization judge (when applicable), and safety record.
+
+    Returns:
+        Boolean score dimensions, ``SafetyViolationsRuleEval``, and personalization judge
+        score (0.0–1.0) or ``None`` when not applicable or the judge cannot run.
+    """
+
+    generated_message = generated.get("next_message") or {}
+    body = str(generated_message.get("body") or "")
+    sending = bool(generated.get("send"))
+    assertion_constraints = (assertions or {}).get("constraints", {})
+    if sending:
+        compliance_env = check_compliance(body, assertion_constraints)
+        compliance_payload = compliance_env.result or {}
+        constraints_pass = bool(compliance_payload.get("passed", False))
+    else:
+        compliance_payload = {"violations": []}
+        constraints_pass = True
+    scores: dict[str, bool] = {
+        "compliance_pass": (OPT_OUT_PATTERN.search(body) is not None) if sending else True,
+        "constraints_pass": constraints_pass,
+    }
+
+    resolved_thresholds = thresholds or {}
+
+    safety_max = resolved_thresholds.get("safety_violations_max")
+    violation_tags = [str(v) for v in (compliance_payload.get("violations") or [])]
+    violation_count = len(violation_tags)
+    if safety_max is not None:
+        if sending:
+            scores["safety_violations_pass"] = violation_count <= int(safety_max)
+        else:
+            scores["safety_violations_pass"] = True
+        if not sending:
+            within_budget = True
+        else:
+            within_budget = violation_count <= int(safety_max)
+    else:
+        within_budget = None
+
+    safety_rule_eval = SafetyViolationsRuleEval(
+        sending=sending,
+        violation_tags=violation_tags,
+        violation_count=violation_count,
+        max_allowed=int(safety_max) if safety_max is not None else None,
+        within_violation_budget=within_budget,
+    )
+
+    personalization_judge_score: float | None = None
+    if sending and body:
+        personalization_judge_score = _score_personalization(body, profile or {}, property_name)
+
+    personalization_min = resolved_thresholds.get("personalization_score_min")
+    if personalization_min is not None and sending:
+        scores["personalization_pass"] = (
+            personalization_judge_score is not None
+            and personalization_judge_score >= float(personalization_min)
+        )
+
+    return scores, safety_rule_eval, personalization_judge_score
 
 
 def score_output(
@@ -262,41 +335,18 @@ def score_output(
         profile: Recipient profile facts for the personalization judge.
         property_name: Property name for the personalization judge.
     Returns:
-        Boolean score dimensions. When ``personalization_score_min`` is set and the agent
-        sends, ``personalization_pass`` is present (false if the judge cannot run).
+        Boolean score dimensions. The personalization judge runs on every call when
+        ``send`` is true and the body is non-empty; ``personalization_pass`` appears only if
+        ``personalization_score_min`` is set (false if the judge cannot run).
     """
 
-    generated_message = generated.get("next_message") or {}
-    body = str(generated_message.get("body") or "")
-    sending = bool(generated.get("send"))
-    assertion_constraints = (assertions or {}).get("constraints", {})
-    if sending:
-        compliance_env = check_compliance(body, assertion_constraints)
-        compliance_payload = compliance_env.result or {}
-        constraints_pass = bool(compliance_payload.get("passed", False))
-    else:
-        compliance_payload = {"violations": []}
-        constraints_pass = True
-    scores: dict[str, bool] = {
-        "compliance_pass": (OPT_OUT_PATTERN.search(body) is not None) if sending else True,
-        "constraints_pass": constraints_pass,
-    }
-
-    resolved_thresholds = thresholds or {}
-
-    safety_max = resolved_thresholds.get("safety_violations_max")
-    if safety_max is not None:
-        if sending:
-            violations = compliance_payload.get("violations") or []
-            scores["safety_violations_pass"] = len(violations) <= int(safety_max)
-        else:
-            scores["safety_violations_pass"] = True
-
-    personalization_min = resolved_thresholds.get("personalization_score_min")
-    if personalization_min is not None and sending:
-        p_score = _score_personalization(body, profile or {}, property_name) if body else None
-        scores["personalization_pass"] = p_score is not None and p_score >= float(personalization_min)
-
+    scores, _, _ = _score_output_bundle(
+        generated,
+        assertions=assertions,
+        thresholds=thresholds,
+        profile=profile,
+        property_name=property_name,
+    )
     return scores
 
 
@@ -305,19 +355,22 @@ def run_case(case: dict[str, Any], *, latency_sample_count: int | None = None) -
     Run one eval case through the agent and score the output.
 
     **Latency:** ``p95_latency_ms`` in the case JSON gates the **P95** of POST ``/run``
-    wall times (``agent_elapsed_ms`` samples). With multiple samples, the harness repeats
-    ``/run`` then runs **one** scoring pass (composed body + judge when thresholds require) so **P95**
-    latency is not confounded by repeated non-deterministic judge calls.
+    wall times (``agent_elapsed_ms`` samples). Default repetition count matches
+    ``DEFAULT_CLI_LATENCY_RUNS`` (overridable via ``REALPAGE_EVAL_LATENCY_RUNS`` or
+    ``--latency-runs``). The harness repeats ``/run`` then runs **one** scoring pass
+    (including personalization judge when ``send`` and body are present) so **P95**
+    latency is not confounded by repeated judge calls tied to composition.
 
     **Integrity:** ``eval_integrity`` records how compose and personalization are wired.
 
     Args:
         case: Parsed JSONL case.
         latency_sample_count: Repetitions for latency (default: env ``REALPAGE_EVAL_LATENCY_RUNS``
-            or ``1``).
+            or ``DEFAULT_CLI_LATENCY_RUNS``).
 
     Returns:
-        Eval result with scores, P95 latency fields, and ``eval_integrity``.
+        Eval result with scores, P95 latency fields, ``personalization_judge_score``,
+        ``safety_violations_rule_eval``, and ``eval_integrity``.
     """
 
     thresholds = case.get("thresholds") or {}
@@ -335,7 +388,7 @@ def run_case(case: dict[str, Any], *, latency_sample_count: int | None = None) -
 
     # Single scoring pass on the last generated output (constraints + optional OpenAI judge).
     t0 = perf_counter()
-    scores = score_output(
+    scores, safety_violations_rule_eval, personalization_judge_score = _score_output_bundle(
         generated,
         assertions=case.get("assertions"),
         thresholds=thresholds,
@@ -364,6 +417,8 @@ def run_case(case: dict[str, Any], *, latency_sample_count: int | None = None) -
         "task_id": case["task_id"],
         "generated": generated,
         "scores": scores,
+        "safety_violations_rule_eval": safety_violations_rule_eval.model_dump(mode="python"),
+        "personalization_judge_score": personalization_judge_score,
         "passed": all(correctness_scores.values()),
         "elapsed_ms": int(round(total_wall)),
         "agent_elapsed_ms": int(round(agent_p95)),
@@ -378,10 +433,13 @@ def run_case(case: dict[str, Any], *, latency_sample_count: int | None = None) -
         },
         "eval_integrity": {
             "compose_message": "openapi_chat_via_run_agent compose_message tool",
-            "personalization_when_threshold_set": (
-                "openai_chat_judge on composed body (_score_personalization)"
-                if thresholds.get("personalization_score_min") is not None
-                else "none — personalization_score_min omitted"
+            "personalization_judge": (
+                "OpenAI judge (_score_personalization) runs whenever send=true and body "
+                "non-empty; personalization_pass is gated only when personalization_score_min set"
+            ),
+            "safety_violations_rule_eval": (
+                "Pydantic SafetyViolationsRuleEval — tags from check_compliance; "
+                "companion to safety_violations_pass when safety_violations_max is set"
             ),
             "correctness_gate": sorted(correctness_scores.keys()),
             "informational_only": sorted(non_gating - {"latency_pass"}),
@@ -404,13 +462,44 @@ def run_all(
 
     Args:
         path: JSONL file path.
-        latency_sample_count: Repetitions per case for P95 latency (``None`` = env or ``1``).
+        latency_sample_count: Repetitions per case for P95 latency (``None`` = env or
+            ``DEFAULT_CLI_LATENCY_RUNS``).
     Returns:
         Aggregate eval report.
     """
 
     n = _resolve_latency_sample_count(latency_sample_count)
     results = [run_case(case, latency_sample_count=n) for case in load_cases(path)]
+    passed = sum(1 for result in results if result["passed"])
+    return {
+        "total": len(results),
+        "passed": passed,
+        "failed": len(results) - passed,
+        "results": results,
+    }
+
+
+def run_all_cases(
+    cases: list[dict[str, Any]],
+    *,
+    latency_sample_count: int | None = None,
+) -> dict[str, Any]:
+    """
+    Run in-memory eval case dicts (e.g. from ``sample.json``) and aggregate pass/fail.
+
+    Args:
+        cases: Eval payloads (same structure as JSONL lines).
+        latency_sample_count: Timed repetitions per case for P95 (``None`` = env default).
+    Returns:
+        Same aggregate shape as ``run_all`` (``total``, ``passed``, ``failed``, ``results``).
+    """
+
+    n = _resolve_latency_sample_count(latency_sample_count)
+    results: list[dict[str, Any]] = []
+    for case in cases:
+        if not isinstance(case, dict) or not case.get("task_id"):
+            raise ValueError("Each case must be an object with a task_id field.")
+        results.append(run_case(case, latency_sample_count=n))
     passed = sum(1 for result in results if result["passed"])
     return {
         "total": len(results),
@@ -439,6 +528,8 @@ def _summarize_report(report: dict[str, Any]) -> dict[str, Any]:
                 "task_id": result["task_id"],
                 "passed": result["passed"],
                 "scores": result["scores"],
+                "safety_violations_rule_eval": result["safety_violations_rule_eval"],
+                "personalization_judge_score": result["personalization_judge_score"],
                 "elapsed_ms": result["elapsed_ms"],
                 "agent_elapsed_ms": result["agent_elapsed_ms"],
                 "eval_integrity": result["eval_integrity"],

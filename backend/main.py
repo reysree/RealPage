@@ -31,18 +31,27 @@ def _load_backend_dotenv() -> None:
 
 _load_backend_dotenv()
 
+import json
 import logging
 from functools import lru_cache
 from time import perf_counter
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from backend.agent import run_agent
-from backend.schemas import AgentOutput, HealthResponse, RunRequest, RunResponse
+from backend.evals.runner import run_all_cases
+from backend.schemas import (
+    AgentOutput,
+    EvalBatchRunRequest,
+    EvalBatchRunResponse,
+    HealthResponse,
+    RunRequest,
+    RunResponse,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -271,6 +280,89 @@ def create_app() -> FastAPI:
 
         latency_ms = int((perf_counter() - started_at) * 1000)
         return RunResponse(output=output, latency_ms=latency_ms)
+
+    @app.post("/eval/run", response_model=EvalBatchRunResponse)
+    async def eval_run_batch(request: EvalBatchRunRequest) -> EvalBatchRunResponse:
+        """
+        Run multiple eval cases (same records as JSONL / sample.json) and return an aggregate report.
+        """
+
+        try:
+            raw = run_all_cases(
+                request.cases,
+                latency_sample_count=request.latency_sample_count,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except Exception as exc:
+            logger.error("Eval batch failed: %s", exc, exc_info=True)
+            raise HTTPException(status_code=500, detail="Eval run failed") from exc
+
+        return EvalBatchRunResponse(
+            total=raw["total"],
+            passed=raw["passed"],
+            failed=raw["failed"],
+            results=raw["results"],
+            source="request_body",
+        )
+
+    @app.post("/eval/run-sample", response_model=EvalBatchRunResponse)
+    async def eval_run_sample(
+        latency_sample_count: int | None = Query(
+            default=None,
+            ge=1,
+            le=64,
+            description=(
+                "Timed repetitions of POST /run per case for P95; omit to use REALPAGE_EVAL_LATENCY_RUNS / default."
+            ),
+        ),
+    ) -> EvalBatchRunResponse:
+        """
+        Run eval cases from ``sample.json`` at the repository root (JSON array).
+        """
+
+        path = _BACKEND_ROOT.parent / "sample.json"
+        if not path.is_file():
+            raise HTTPException(
+                status_code=404,
+                detail="sample.json not found at repository root.",
+            )
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail="sample.json is not valid JSON.",
+            ) from exc
+        if not isinstance(data, list):
+            raise HTTPException(
+                status_code=422,
+                detail="sample.json must be a JSON array of case objects.",
+            )
+        cases: list[dict[str, Any]] = []
+        for item in data:
+            if not isinstance(item, dict):
+                raise HTTPException(
+                    status_code=422,
+                    detail="sample.json array must contain only JSON objects.",
+                )
+            cases.append(item)
+
+        try:
+            raw = run_all_cases(cases, latency_sample_count=latency_sample_count)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except Exception as exc:
+            logger.error("Eval sample run failed: %s", exc, exc_info=True)
+            raise HTTPException(status_code=500, detail="Eval run failed") from exc
+
+        return EvalBatchRunResponse(
+            total=raw["total"],
+            passed=raw["passed"],
+            failed=raw["failed"],
+            results=raw["results"],
+            source="sample_json",
+        )
 
     return app
 

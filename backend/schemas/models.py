@@ -270,6 +270,35 @@ class ThresholdsRecord(BaseModel):
     )
 
 
+class SafetyViolationsRuleEval(BaseModel):
+    """
+    Structured rule-based safety snapshot for the eval harness.
+
+    Built from ``check_compliance`` violation tags (not an LLM). Mirrors the boolean
+    ``safety_violations_pass`` gate when ``max_allowed`` is set.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    sending: bool = Field(..., description="Whether the agent produced a sendable message.")
+    violation_tags: list[str] = Field(
+        default_factory=list,
+        description="Tags from ``check_compliance`` (e.g. missing_opt_out, pii_leak).",
+    )
+    violation_count: int = Field(0, ge=0, description="Number of distinct violation tags.")
+    max_allowed: int | None = Field(
+        None,
+        description="Copy of thresholds.safety_violations_max when that threshold is present.",
+    )
+    within_violation_budget: bool | None = Field(
+        None,
+        description=(
+            "True when violation_count <= max_allowed or when not sending but a cap exists; "
+            "None when no violation cap is configured."
+        ),
+    )
+
+
 class CtaPayload(BaseModel):
     """
     Bounded call-to-action payload attached to an outbound message.
@@ -465,6 +494,46 @@ class RunRequest(TestCase):
                 outreach_input_must_pass_language_policy(host)
 
         return self
+
+
+class EvalBatchRunRequest(BaseModel):
+    """
+    Request body to run multiple eval cases in one API call (same shape as JSONL records).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    cases: list[dict[str, Any]] = Field(
+        ...,
+        min_length=1,
+        description="Eval case dicts (task_id, input, assertions, thresholds, …).",
+    )
+    latency_sample_count: int | None = Field(
+        None,
+        ge=1,
+        le=64,
+        description="Optional override for POST /run repetitions per case (P95); default from env.",
+    )
+
+
+class EvalBatchRunResponse(BaseModel):
+    """
+    Aggregate eval report returned by POST /eval/run and POST /eval/run-sample.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    total: int = Field(..., ge=0, description="Number of cases executed.")
+    passed: int = Field(..., ge=0, description="Cases passing correctness gate.")
+    failed: int = Field(..., ge=0, description="Cases failing correctness gate.")
+    results: list[dict[str, Any]] = Field(
+        ...,
+        description="Per-case payloads from ``run_case`` (scores, latency, generated, …).",
+    )
+    source: str = Field(
+        ...,
+        description="Where cases came from for auditing (e.g. request_body, sample_json).",
+    )
 
 
 class RunResponse(BaseModel):

@@ -84,3 +84,6 @@ Thumbs.db
 *.njsproj
 *.sln
 *.sw?
+
+# Personal local-only reference UI (gitignored — clone yields fallback until you add files)
+frontend/src/personal/

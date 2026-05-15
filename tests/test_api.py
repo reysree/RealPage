@@ -383,3 +383,73 @@ def test_run_route_accepts_omitted_thresholds_and_expected() -> None:
 
     assert response.status_code == 200
     assert response.json()["output"]["send"] is True
+
+
+def test_eval_run_sample_returns_aggregate_report(monkeypatch):
+    """
+    POST /eval/run-sample loads root sample.json and returns the eval harness shape.
+    """
+
+    def _fake_run_all_cases(cases: list, **_: object) -> dict:
+        return {
+            "total": len(cases),
+            "passed": len(cases),
+            "failed": 0,
+            "results": [
+                {
+                    "task_id": c["task_id"],
+                    "passed": True,
+                    "scores": {"compliance_pass": True},
+                    "personalization_judge_score": None,
+                    "latency": {"agent_p95_ms": 12.0},
+                }
+                for c in cases
+            ],
+        }
+
+    monkeypatch.setattr("backend.main.run_all_cases", _fake_run_all_cases)
+    response = TestClient(app).post("/eval/run-sample")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["source"] == "sample_json"
+    assert body["total"] == 10
+    assert body["passed"] == 10
+    assert body["failed"] == 0
+    assert len(body["results"]) == 10
+    assert body["results"][0]["task_id"] == "prospect_welcome_day0"
+
+
+def test_eval_run_batch_rejects_empty_case_list() -> None:
+    """
+    POST /eval/run requires at least one case object.
+    """
+
+    response = TestClient(app).post("/eval/run", json={"cases": []})
+
+    assert response.status_code == 422
+
+
+def test_eval_run_batch_returns_request_source(monkeypatch):
+    """
+    POST /eval/run accepts explicit case payloads and labels source request_body.
+    """
+
+    record = load_sample_record(0)
+
+    def _fake_run_all_cases(cases: list, **_: object) -> dict:
+        return {
+            "total": len(cases),
+            "passed": len(cases),
+            "failed": 0,
+            "results": [{"task_id": cases[0]["task_id"], "passed": True, "scores": {}}],
+        }
+
+    monkeypatch.setattr("backend.main.run_all_cases", _fake_run_all_cases)
+    response = TestClient(app).post("/eval/run", json={"cases": [record]})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["source"] == "request_body"
+    assert body["total"] == 1
+    assert body["results"][0]["task_id"] == record["task_id"]

@@ -12,6 +12,7 @@ import pytest
 import backend.evals.runner as eval_runner
 from backend.evals.runner import (
     _percentile_linear,
+    _score_output_bundle,
     load_cases,
     run_all,
     run_case,
@@ -197,6 +198,31 @@ def test_score_output_does_not_use_expected_block_for_pass_fail() -> None:
     assert scores["constraints_pass"] is True
 
 
+def test_run_case_includes_safety_violations_rule_eval() -> None:
+    """
+    Each eval case returns a structured SafetyViolationsRuleEval alongside boolean scores.
+    """
+
+    case = load_cases(SAMPLE_PATH)[0]
+    result = run_case(case)
+    se = result["safety_violations_rule_eval"]
+    assert se["sending"] is True
+    assert se["violation_tags"] == []
+    assert se["violation_count"] == 0
+    assert se["max_allowed"] == 0
+    assert se["within_violation_budget"] is True
+    assert result["personalization_judge_score"] == pytest.approx(0.92)
+
+    opted = load_cases(SAMPLE_PATH)[2]
+    r2 = run_case(opted)
+    se2 = r2["safety_violations_rule_eval"]
+    assert se2["sending"] is False
+    assert se2["violation_count"] == 0
+    assert se2["max_allowed"] is None
+    assert se2["within_violation_budget"] is None
+    assert r2["personalization_judge_score"] is None
+
+
 def test_score_output_reports_constraint_violations_on_generated_body() -> None:
     """
     Verify constraint checks run on the generated message body (e.g. PII).
@@ -214,8 +240,14 @@ def test_score_output_reports_constraint_violations_on_generated_body() -> None:
         assertions=case["assertions"],
         thresholds=case["thresholds"],
     )
+    _bundle_scores, safety, _ = _score_output_bundle(
+        generated,
+        assertions=case["assertions"],
+        thresholds=case["thresholds"],
+    )
 
     assert scores["constraints_pass"] is False
+    assert "pii_leak" in safety.violation_tags
 
 
 def test_run_case_surfaces_latency_failure_as_non_gating_warning(

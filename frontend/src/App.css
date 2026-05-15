@@ -150,3 +150,107 @@ button:disabled {
   white-space: pre-wrap;
   word-wrap: break-word;
 }
+
+.eval-panel {
+  margin-top: 32px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--social-bg);
+  box-shadow: var(--shadow);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.eval-intro {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text-m, var(--text-h));
+}
+
+.eval-intro code {
+  font-size: 12px;
+}
+
+.eval-error {
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: rgba(220, 80, 80, 0.12);
+  border: 1px solid rgba(220, 80, 80, 0.35);
+  font-size: 14px;
+}
+
+.eval-summary {
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.eval-summary-ok {
+  color: var(--accent, #0d9488);
+}
+
+.eval-summary-fail {
+  color: #b45309;
+  font-weight: 600;
+}
+
+.eval-source {
+  font-size: 13px;
+  opacity: 0.8;
+}
+
+.eval-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg);
+}
+
+.eval-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.eval-table th,
+.eval-table td {
+  text-align: left;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.eval-table th {
+  font-weight: 700;
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.eval-cell-mono {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.eval-cell-chips {
+  min-width: 200px;
+}
+
+.eval-chip {
+  display: inline-block;
+  margin: 2px 6px 2px 0;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.eval-chip-pass {
+  background: rgba(13, 148, 136, 0.15);
+  color: #0f766e;
+}
+
+.eval-chip-fail {
+  background: rgba(220, 80, 80, 0.15);
+  color: #b91c1c;
+}

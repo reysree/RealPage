@@ -44,8 +44,8 @@ def _unwrap_compose_tool(envelope: ToolResultEnvelope) -> dict[str, Any] | None:
     """
     Extract compose_message result dict, or None when composition failed.
 
-    Failures are logged and audited internally. The caller returns _empty_output() when
-    None is returned — no error details propagate to the API response.
+    Failures are logged and audited internally. The caller returns a blocked ``AgentOutput``
+    when ``None`` is returned — no error details propagate to the API response.
 
     Args:
         envelope: compose_message return value.
@@ -124,30 +124,6 @@ def _dump_output(agent_output: AgentOutput) -> dict[str, Any]:
     """
 
     return agent_output.model_dump(mode="python", exclude_none=False)
-
-
-def _empty_output(audit_trail: list[AuditTrailEntry] | None = None) -> dict[str, Any]:
-    """
-    Create the standard no-send output shape.
-
-    Args:
-        audit_trail: Optional audit trail entries to include.
-    Returns:
-        Agent output dictionary with send=false and all message fields empty.
-    """
-
-    return _dump_output(
-        AgentOutput(
-            send=False,
-            next_message=None,
-            next_action=NextAction(
-                type="human_in_the_loop",
-                name="pipeline_blocked",
-                value=None,
-            ),
-            audit_trail=audit_trail,
-        )
-    )
 
 
 def _extract_text_fields(request: RunRequest) -> dict[str, str]:

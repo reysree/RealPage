@@ -133,7 +133,7 @@ Fixed responsibilities. Do not add agents without updating this table and the Ha
 | Developer | `.claude/agents/distinguished-engineer.md` | Phases 1–5; fixing audit flags | `python-guide`, `openai-sdk-guide`, `sqlite3-guide`, `react-guide`, `tdd`, `recall` | `logs/YYYYMMDD_HHMM_developer_phaseN.md` |
 | Security Analyst | `.claude/agents/security-analyst.md` | After each developer phase; before gate opens | `security-analyst-guide`, `recall` | `logs/YYYYMMDD_HHMM_security-analyst_phaseN.md` |
 | Eval Agent | `.claude/agents/eval-agent.md` | After Phase 4 (agent + API complete); before Phase 5 gate | `recall` | `logs/YYYYMMDD_HHMM_eval_phaseN.md` |
-| QA Analyst | `.claude/agents/qa-analyst.md` | Phases 2–5; audit test coverage and identify gaps | `recall` | `logs/YYYYMMDD_HHMM_qa-analyst_coverage.md` |
+| QA Analyst | `.claude/agents/qa-analyst.md` (mirrored `.cursor/agents/qa-analyst.md`) | Phases 2–5; audit test coverage and identify gaps | `recall` | `logs/YYYYMMDD_HHMM_qa-analyst_coverage.md` |
 | Audit | *(not yet created)* | After each developer phase | `python-guide`, `sqlite3-guide`, `tdd`, `recall` | `logs/YYYYMMDD_HHMM_audit_phaseN.md` |
 | UX Writer | `.claude/agents/ux-writer.md` | UI copy, labels, errors, onboarding | *(none — self-contained)* | Copy delivered inline |
 | Prompt Engineer | `.claude/agents/prompt-engineer.md` | Write/review agent system prompts and `@function_tool` docstrings | `recall` | `logs/YYYYMMDD_HHMM_prompt-engineer_<descriptor>.md` |
